@@ -5,6 +5,17 @@ import Testing
 @Suite("AppStateMachine")
 struct AppStateMachineTests {
 
+    // Helper: poll until `condition` holds or `timeout` passes. A fixed sleep
+    // flakes: under the full suite's load the 50 ms timer can fire after 1 s.
+    private func eventually(timeout: Duration = .seconds(10), _ condition: () async -> Bool) async throws -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if await condition() { return true }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return await condition()
+    }
+
     // Helper: collect state-change events from the actor's AsyncStream into an array.
     private func collectChanges(_ machine: AppStateMachine) -> AsyncCollector<AppStateMachine.StateChange> {
         AsyncCollector(stream: machine.events)
@@ -105,9 +116,7 @@ struct AppStateMachineTests {
         await machine.send(.start)
         #expect(await machine.state == .recording)
 
-        // Wait long enough for the timeout to fire.
-        try await Task.sleep(nanoseconds: 200_000_000) // 200 ms
-        #expect(await machine.state == .processing)
+        #expect(try await eventually { await machine.state == .processing })
     }
 
     @Test("timeout handler replaces TIMEOUT: called once, state stays recording")
@@ -116,7 +125,7 @@ struct AppStateMachineTests {
         let calls = CallCounter()
         await machine.onTimeout { calls.increment() }
         await machine.send(.start)
-        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(try await eventually { calls.value > 0 })
         #expect(calls.value == 1)
         #expect(await machine.state == .recording)
     }

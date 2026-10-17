@@ -156,6 +156,44 @@ Uma única cena `Window("VoiceType", id: "main")` (`MainWindowView`): `Navigatio
 
 Autosalva em ~400 ms debounce. Indicador `Salvando…` / `Salvo` no canto.
 
+## OpenKnowledge
+
+Com **Reuniões → Vault = OpenKnowledge** (`AppConfig.meetingVaultKind = .openKnowledge`, raiz em `openKnowledgeVaultPath`, a pasta que tem `.ok/`), a reunião não vai direto para o vault: vira uma **pendência** que o usuário aprova passo a passo. Nada pede atenção sozinho: o menu mostra "N reuniões aguardando aprovação" e a janela só abre por "Revisar…". A lógica fica em `VoiceTypeCore/Sources/Core/OpenKnowledge/`; o app tem o ramo OK do `MeetingProcessor`, `PendingApprovals` (lista + recuperação), `ApprovalRouter` e a janela `Window(id: "approval")` (`ApprovalWindowView` + `ApprovalViewModel`).
+
+Fluxo:
+
+1. **Processamento** (`MeetingProcessor.propose`): transcrição + resumo como no modo Obsidian, depois `OKProposalBuilder.build` sugere o projeto (`OKAssistant.suggestProject`), fixa os caminhos do registro e destila o conhecimento contra os docs do projeto (`planDistillation` + `writeDistillation`, via `ClaudeCLISummarizer.complete`, sem tools, conteúdo não confiável só no stdin). Qualquer falha do modelo cai em `distillationError` e a pendência continua aprovável só com registro + transcrição. A proposta é gravada por `MeetingProposalStore.replaceFromReprocessing` (recusa com journal ou se uma aprovação terminou no meio).
+2. **Aprovação** (`OKApprovalSession`, valor puro; o VM persiste cada mudança): passo Projeto (sugerido pré-selecionado, busca, "Novo projeto…"; trocar de projeto redestila, ou só `repath` sem resumo/sem modelo), passo Registro, um passo por item (novo, atualização ou conflito) com Preview (`OKMarkdownHTML.document` num `WKWebView` sem JavaScript e sem navegação; atualização mostra o diff) e Editor. Aprovar carimba o hash do Markdown e da base mostrada; edição, redestilação ou conflito que mude qualquer um anula o carimbo.
+3. **Gravar** (`ApprovalViewModel.commit`): com item aprovado relê o catálogo e redestila se mudou ou passou de 24 h (`OKProposalBuilder.isStale`); realoca o registro se outra reunião tomou o nome (`relocateIfTaken`); então, dentro de `MeetingProposalStore.withLock`, confere a geração e chama `OKVaultWriter.commit` com um `precondition` que repete as checagens já com a intenção gravada. `.committed` → `OKApprovalFinalizer.finalize` + notificação de sucesso; `.partial` → `finalizePartial` (registro gravado, só os itens em conflito voltam); `.conflicts` → os itens voltam para revisão com a versão atual. A sessão e a proposta presas a uma geração (`generation`) nunca gravam sobre outra: reprocessar com a janela aberta recarrega a janela.
+4. **Recuperação**: `PendingApprovals.bootstrap()` no launch e `recoverMeeting` ao abrir a reunião terminam ou desfazem um journal deixado por crash, sempre no vault gravado no journal (`OKVaultIdentity`: caminho canônico + device/inode), nunca no da config.
+
+Arquivos no diretório da reunião (`~/Library/Application Support/VoiceType/Meetings/<AAAA-MM-DD_HHmmss>/`), todos lidos e escritos sob `MeetingProposalStore.withLock`:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `ok-proposal.json` | `MeetingProposal`: geração, vault de origem, nota, projeto sugerido/escolhido, caminhos (persistidos, nunca recalculados por baixo), hashes do que já existe, fingerprint do catálogo, `distilledAt`, itens destilados. Existe enquanto a reunião está pendente |
+| `ok-progress.json` | `OKApprovalProgress` da janela: passo, projeto (ou projeto novo), carimbos de aprovação, edições. Progresso de outra geração é ignorado |
+| `ok-commit/journal.json` | Intenção durável do `OKVaultWriter` (ops, hashes esperados, nomes no staging, fase). Some depois de `finish` |
+| `pipeline.json` | Ganha `okVault`, `okProject`, `okRecordPath`, `okTranscriptPath` depois da primeira aprovação: re-aprovar a mesma reunião reusa os caminhos e trava o projeto |
+
+Layout no vault:
+
+```
+<vault>/
+├── README.md                         ## Projetos: um item por projeto (projeto novo entra aqui)
+├── <projeto>/
+│   ├── index.md                      type: indice; "## Conhecimento registrado" com links dos docs novos
+│   ├── reunioes/AAAA-MM-DD-<slug>.md registro (frontmatter OK + "Conhecimento destilado")
+│   ├── reunioes/transcricoes/…md     transcrição, mesmo nome do registro
+│   └── decisoes/ regras-de-negocio/ arquitetura/ tutoriais/ gotchas/ glossario/ snippets/
+│       (cada pasta com .ok/frontmatter.yml)
+├── _inbox/diario/AAAA-MM-DD.md       notas de voz do dia (links relativos)
+├── _inbox/ideias/…md
+└── .ok/local/voicetype-staging/      temporários e cópias do writer (fora do git do OK)
+```
+
+A escrita é transacional: temporários e preimagens no staging, `RENAME_SWAP` condicional por hash, nenhuma versão de terceiro apagada sem cópia (`.ok/local/voicetype-preserved/`). Ver ADR-012.
+
 ## Build + distribuição
 
 Targets macOS 14+ arm64 only. Output `dist/`.

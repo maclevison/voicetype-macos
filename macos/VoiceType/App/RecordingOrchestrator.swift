@@ -282,7 +282,10 @@ final class RecordingOrchestrator {
         guard await preflight(cfg: cfg, requiresTarget: !isVoiceNote, stateMachine: stateMachine) else { return }
         let target = capturedTarget
         let bundleID = isVoiceNote ? DailyNote.obsidianBundleID : (target?.bundleIdentifier ?? "")
-        let vault = URL(fileURLWithPath: (cfg.meetingNotesFolder as NSString).expandingTildeInPath, isDirectory: true)
+        let vaultKind = cfg.meetingVaultKind
+        let vault = vaultKind == .openKnowledge
+            ? OKVault.url(cfg.openKnowledgeVaultPath)
+            : URL(fileURLWithPath: (cfg.meetingNotesFolder as NSString).expandingTildeInPath, isDirectory: true)
 
         var pipelineMode: Pipeline.Mode = (capturedMode == .translate) ? .translate : .refine
         if pipelineMode == .refine,
@@ -310,10 +313,14 @@ final class RecordingOrchestrator {
             paster: isVoiceNote
                 ? DailyNoteDeliveryAdapter(
                     vault: vault,
+                    kind: vaultKind,
                     cliPath: cfg.claudeCLIPath,
                     rawTranscript: { await pipeline.lastRawTranscript },
                     onSaved: { @MainActor [weak self] title in
-                        let note = DailyNote.url(in: vault, for: Date()).deletingPathExtension().lastPathComponent
+                        let daily = vaultKind == .openKnowledge
+                            ? OKInbox.dailyURL(in: vault, for: Date())
+                            : DailyNote.url(in: vault, for: Date())
+                        let note = daily.deletingPathExtension().lastPathComponent
                         if let title {
                             await self?.notifier.success(title: NotificationCopy.voiceNoteSavedTitle(title), body: note)
                         } else {

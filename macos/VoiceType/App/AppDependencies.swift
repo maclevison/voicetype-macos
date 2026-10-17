@@ -31,6 +31,7 @@ final class AppDependencies {
     let whisperModels: WhisperModelManager
     let recordingOrchestrator: RecordingOrchestrator
     let meetingRecorder: MeetingRecorder
+    let pendingApprovals: PendingApprovals
     let meetingDetector: MeetingDetector
 
     init(
@@ -75,7 +76,11 @@ final class AppDependencies {
             whisperModels: resolvedWhisperModels,
             editObserver: EditObserver(store: suggestionStore)
         )
-        self.meetingRecorder = MeetingRecorder(configStore: configStore, notifier: resolvedNotifier)
+        let pendingApprovals = PendingApprovals(notifier: resolvedNotifier)
+        self.pendingApprovals = pendingApprovals
+        self.meetingRecorder = MeetingRecorder(configStore: configStore, notifier: resolvedNotifier, onPendingChanged: {
+            await pendingApprovals.refresh()
+        })
         self.meetingDetector = MeetingDetector(recorder: meetingRecorder, config: configSnapshot, notifier: resolvedNotifier)
     }
 }

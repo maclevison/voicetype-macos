@@ -43,10 +43,10 @@ final class MeetingRecorder {
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("VoiceType/Meetings", isDirectory: true)
 
-    init(configStore: ConfigStore, notifier: Notifier) {
+    init(configStore: ConfigStore, notifier: Notifier, onPendingChanged: @escaping @Sendable () async -> Void) {
         self.configStore = configStore
         self.notifier = notifier
-        self.processor = MeetingProcessor(configStore: configStore, notifier: notifier)
+        self.processor = MeetingProcessor(configStore: configStore, notifier: notifier, onPendingChanged: onPendingChanged)
         system.onNeedsRebuild = { [weak self] in self?.scheduleSystemRebuild() }
         mic.onConfigurationChange = { [weak self] in self?.scheduleMicRestart() }
     }
@@ -142,7 +142,19 @@ final class MeetingRecorder {
             return
         }
         let dir = Self.baseDirectory.appendingPathComponent(latest, isDirectory: true)
-        Task { await processor.enqueue(dir) }
+        Task {
+            let cfg = (try? await configStore.load()) ?? AppConfig()
+            // Reprocessing rebuilds the proposal and drops the approval window's progress.
+            if cfg.meetingVaultKind == .openKnowledge, OKApprovalProgress.load(dir)?.hasEdits == true {
+                let alert = NSAlert()
+                alert.messageText = "Reprocessar e descartar as edições da aprovação pendente?"
+                alert.addButton(withTitle: "Reprocessar")
+                alert.addButton(withTitle: "Cancelar")
+                NSApp.activate(ignoringOtherApps: true)
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
+            await processor.enqueue(dir)
+        }
     }
 
     /// Deletes old meetings' audio per `meetingAudioRetentionDays` (launch;

@@ -121,6 +121,15 @@ enum SettingsStrings {
     static let meetingNotesFolderLabel = "Pasta das notas"
     static let meetingChooseFolder = "Escolher…"
     static let meetingShowInFinder = "Mostrar no Finder"
+    static let meetingVaultKindLabel = "Vault padrão"
+    static let meetingVaultKindOptions: [(id: String, label: String)] = [
+        ("obsidian", "Obsidian"),
+        ("openknowledge", "OpenKnowledge"),
+    ]
+    static let meetingOKVaultLabel = "Raiz do projeto OpenKnowledge"
+    static let meetingVaultNotOK = "Não é um projeto OpenKnowledge (falta a pasta .ok/)."
+    static let meetingVaultUnset = "Escolha a raiz de um projeto OpenKnowledge (a pasta com .ok/)."
+    static let meetingOKHelp = "Reuniões viram pendências de aprovação no menu; notas de voz vão para _inbox/."
     static let meetingCLIPathLabel = "Caminho do Claude CLI (vazio = detectar)"
     static let meetingCLINotFound = "não encontrado"
     static let meetingCalendarHeader = "Calendário"

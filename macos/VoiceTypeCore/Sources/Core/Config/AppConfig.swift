@@ -118,6 +118,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// #79: hold shortcut that dictates an idea into today's daily note
     /// instead of pasting (accelerator syntax; empty = off).
     public var voiceNoteShortcut: String
+    /// Where meetings and voice notes go: Obsidian (`meetingNotesFolder`) or
+    /// the OpenKnowledge project at `openKnowledgeVaultPath`.
+    public var meetingVaultKind: MeetingVaultKind
+    /// Root of the OpenKnowledge project (the folder holding `.ok/`; `~` expanded at use; empty = not set).
+    public var openKnowledgeVaultPath: String
 
     public init(
         schemaVersion: Int = 2,
@@ -151,7 +156,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
         meetingOrgs: [MeetingOrg] = MeetingOrg.defaults,
         meetingDetectionMode: String = "ask",
         meetingAudioRetentionDays: Int = 7,
-        voiceNoteShortcut: String = "Alt+N"
+        voiceNoteShortcut: String = "Alt+N",
+        meetingVaultKind: MeetingVaultKind = .obsidian,
+        openKnowledgeVaultPath: String = ""
     ) {
         self.schemaVersion = schemaVersion
         self.groq = groq
@@ -185,6 +192,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.meetingDetectionMode = meetingDetectionMode
         self.meetingAudioRetentionDays = meetingAudioRetentionDays
         self.voiceNoteShortcut = voiceNoteShortcut
+        self.meetingVaultKind = meetingVaultKind
+        self.openKnowledgeVaultPath = openKnowledgeVaultPath
     }
 
     // MARK: - Codable with v1→v2 migration
@@ -216,6 +225,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case meetingDetectionMode
         case meetingAudioRetentionDays
         case voiceNoteShortcut
+        case meetingVaultKind
+        case openKnowledgeVaultPath
     }
 
     // v1 flat keys used only during decode migration
@@ -263,6 +274,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         try c.encode(meetingDetectionMode, forKey: .meetingDetectionMode)
         try c.encode(meetingAudioRetentionDays, forKey: .meetingAudioRetentionDays)
         try c.encode(voiceNoteShortcut, forKey: .voiceNoteShortcut)
+        try c.encode(meetingVaultKind, forKey: .meetingVaultKind)
+        try c.encode(openKnowledgeVaultPath, forKey: .openKnowledgeVaultPath)
     }
 
     public init(from decoder: Decoder) throws {
@@ -303,6 +316,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
             self.meetingDetectionMode = try c2.decodeIfPresent(String.self, forKey: .meetingDetectionMode) ?? defaults.meetingDetectionMode
             self.meetingAudioRetentionDays = try c2.decodeIfPresent(Int.self, forKey: .meetingAudioRetentionDays) ?? defaults.meetingAudioRetentionDays
             self.voiceNoteShortcut = try c2.decodeIfPresent(String.self, forKey: .voiceNoteShortcut) ?? defaults.voiceNoteShortcut
+            // Raw string, not MeetingVaultKind: an unknown value opens in Obsidian mode instead of throwing.
+            self.meetingVaultKind = (try c2.decodeIfPresent(String.self, forKey: .meetingVaultKind))
+                .flatMap(MeetingVaultKind.init(rawValue:)) ?? defaults.meetingVaultKind
+            self.openKnowledgeVaultPath =
+                try c2.decodeIfPresent(String.self, forKey: .openKnowledgeVaultPath) ?? defaults.openKnowledgeVaultPath
             self.groq = try c2.decodeIfPresent(GroqConfig.self, forKey: .groq) ?? defaults.groq
             self.shortcuts = try c2.decodeIfPresent(ShortcutConfig.self, forKey: .shortcuts) ?? defaults.shortcuts
             self.recording = try c2.decodeIfPresent(RecordingConfig.self, forKey: .recording) ?? defaults.recording
@@ -337,6 +355,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
             self.meetingDetectionMode = defaults.meetingDetectionMode
             self.meetingAudioRetentionDays = defaults.meetingAudioRetentionDays
             self.voiceNoteShortcut = defaults.voiceNoteShortcut
+            self.meetingVaultKind = defaults.meetingVaultKind
+            self.openKnowledgeVaultPath = defaults.openKnowledgeVaultPath
             self.groq = GroqConfig(
                 apiKey: try c1.decodeIfPresent(String.self, forKey: .groqApiKey) ?? ""
             )

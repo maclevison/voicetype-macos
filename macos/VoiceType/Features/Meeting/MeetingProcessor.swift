@@ -19,12 +19,16 @@ actor MeetingProcessor {
 
     private let configStore: ConfigStore
     private let notifier: Notifier
+    /// Runs after a proposal is saved (OpenKnowledge mode) so the menu's
+    /// pending list refreshes.
+    private let onPendingChanged: @Sendable () async -> Void
     private var tail: Task<Void, Never>?
     private static let log = Logger(subsystem: "VoiceType", category: "meeting-pipeline")
 
-    init(configStore: ConfigStore, notifier: Notifier) {
+    init(configStore: ConfigStore, notifier: Notifier, onPendingChanged: @escaping @Sendable () async -> Void) {
         self.configStore = configStore
         self.notifier = notifier
+        self.onPendingChanged = onPendingChanged
     }
 
     /// Queues `directory` behind any run in progress.
@@ -87,6 +91,10 @@ actor MeetingProcessor {
                 transcript: transcript.isEmpty ? nil : transcript,
                 event: event
             )
+            if cfg.meetingVaultKind == .openKnowledge {
+                try await propose(note, summaryFailure: failure, state: state, in: dir, cfg: cfg)
+                return
+            }
             let folder = URL(fileURLWithPath: (cfg.meetingNotesFolder as NSString).expandingTildeInPath, isDirectory: true)
             let written = try MeetingNoteWriter.write(note, to: folder)
 
@@ -115,6 +123,55 @@ actor MeetingProcessor {
                 body: "\(error.localizedDescription) — use \"Reprocessar última reunião\"."
             )
         }
+    }
+
+    // MARK: - OpenKnowledge
+
+    /// OpenKnowledge mode: the meeting becomes a pending approval
+    /// (`ok-proposal.json`); nothing is written to the vault here. The
+    /// pipeline state is updated from disk inside the store's lock, never
+    /// from `state`, which may be stale.
+    private func propose(
+        _ note: MeetingNote, summaryFailure failure: String?, state: MeetingPipelineState, in dir: URL, cfg: AppConfig
+    ) async throws {
+        let vault = OKVault.url(cfg.openKnowledgeVaultPath)
+        let assistant = ClaudeCLISummarizer.locate(configured: cfg.claudeCLIPath).map { ClaudeCLISummarizer(executableURL: $0) }
+        let proposal = await OKProposalBuilder(assistant: assistant, user: NSFullUserName())
+            .build(note: note, summaryFailure: failure, state: state, vault: vault, now: Date())
+        let outcome = try MeetingProposalStore.replaceFromReprocessing(proposal, in: dir, builtFrom: state) {
+            $0.okProcessed = true
+            $0.summarized = failure == nil
+        }
+        let title = note.summary.title
+        switch outcome {
+        case .meetingBusy:
+            await notifier.error(
+                title: "Reprocessamento descartado",
+                body: "A reunião “\(title)” está sendo gravada no vault. Reprocesse de novo para gerar uma nova pendência."
+            )
+            return
+        case .approvedMeanwhile:
+            await notifier.error(
+                title: "Reprocessamento descartado",
+                body: "A reunião “\(title)” foi gravada no vault enquanto era reprocessada. Reprocesse de novo para gerar uma nova pendência."
+            )
+            return
+        case .replaced:
+            break
+        }
+        await onPendingChanged()
+        if !OKVault.isProjectRoot(vault) {
+            await notifier.error(
+                title: "Vault OpenKnowledge inválido",
+                body: OKVault.isConfigured(cfg.openKnowledgeVaultPath)
+                    ? vault.path
+                    : "Nenhum vault configurado em Ajustes → Reuniões."
+            )
+        }
+        if let failure {
+            await notifier.error(title: "Reunião sem resumo", body: failure)
+        }
+        Self.log.info("meeting proposal saved: \(dir.path, privacy: .public) summarized=\(failure == nil)")
     }
 
     // MARK: - Transcription

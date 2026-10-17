@@ -18,15 +18,50 @@ struct MeetingSection: View {
     var body: some View {
         Form {
             Section(SettingsStrings.meetingNotesHeader) {
-                TextField(SettingsStrings.meetingNotesFolderLabel, text: Binding(
-                    get: { snapshot.config.meetingNotesFolder },
-                    set: { v in Task { await snapshot.update { $0.meetingNotesFolder = v } } }
-                ))
-                HStack {
-                    Button(SettingsStrings.meetingChooseFolder) { chooseFolder() }
-                    Button(SettingsStrings.meetingShowInFinder) {
-                        let path = (snapshot.config.meetingNotesFolder as NSString).expandingTildeInPath
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                Picker(SettingsStrings.meetingVaultKindLabel, selection: Binding(
+                    get: { snapshot.config.meetingVaultKind.rawValue },
+                    set: { v in
+                        guard let kind = MeetingVaultKind(rawValue: v) else { return }
+                        Task { await snapshot.update { $0.meetingVaultKind = kind } }
+                    }
+                )) {
+                    ForEach(SettingsStrings.meetingVaultKindOptions, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                if snapshot.config.meetingVaultKind == .openKnowledge {
+                    TextField(SettingsStrings.meetingOKVaultLabel, text: Binding(
+                        get: { snapshot.config.openKnowledgeVaultPath },
+                        set: { v in Task { await snapshot.update { $0.openKnowledgeVaultPath = v } } }
+                    ))
+                    HStack {
+                        Button(SettingsStrings.meetingChooseFolder) { chooseOKVault() }
+                        Button(SettingsStrings.meetingShowInFinder) {
+                            NSWorkspace.shared.activateFileViewerSelecting([OKVault.url(snapshot.config.openKnowledgeVaultPath)])
+                        }
+                        .disabled(!OKVault.isConfigured(snapshot.config.openKnowledgeVaultPath))
+                    }
+                    if !OKVault.isConfigured(snapshot.config.openKnowledgeVaultPath) {
+                        Text(SettingsStrings.meetingVaultUnset)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    } else if !OKVault.isProjectRoot(OKVault.url(snapshot.config.openKnowledgeVaultPath)) {
+                        Text(SettingsStrings.meetingVaultNotOK)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    Text(SettingsStrings.meetingOKHelp)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    TextField(SettingsStrings.meetingNotesFolderLabel, text: Binding(
+                        get: { snapshot.config.meetingNotesFolder },
+                        set: { v in Task { await snapshot.update { $0.meetingNotesFolder = v } } }
+                    ))
+                    HStack {
+                        Button(SettingsStrings.meetingChooseFolder) { chooseFolder() }
+                        Button(SettingsStrings.meetingShowInFinder) {
+                            let path = (snapshot.config.meetingNotesFolder as NSString).expandingTildeInPath
+                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                        }
                     }
                 }
                 TextField(SettingsStrings.meetingCLIPathLabel, text: Binding(
@@ -182,15 +217,27 @@ struct MeetingSection: View {
     }
 
     private func chooseFolder() {
+        guard let path = pickDirectory(startingAt: snapshot.config.meetingNotesFolder) else { return }
+        Task { await snapshot.update { $0.meetingNotesFolder = path } }
+    }
+
+    private func chooseOKVault() {
+        guard let path = pickDirectory(startingAt: snapshot.config.openKnowledgeVaultPath) else { return }
+        Task { await snapshot.update { $0.openKnowledgeVaultPath = path } }
+    }
+
+    /// Directory picked in an open panel, abbreviated to `~/…` under home.
+    private func pickDirectory(startingAt current: String) -> String? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
-        panel.directoryURL = URL(fileURLWithPath: (snapshot.config.meetingNotesFolder as NSString).expandingTildeInPath)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if !current.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: (current as NSString).expandingTildeInPath)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
         let home = NSHomeDirectory()
-        let path = url.path.hasPrefix(home + "/") ? "~" + url.path.dropFirst(home.count) : url.path
-        Task { await snapshot.update { $0.meetingNotesFolder = path } }
+        return url.path.hasPrefix(home + "/") ? "~" + url.path.dropFirst(home.count) : url.path
     }
 }
 

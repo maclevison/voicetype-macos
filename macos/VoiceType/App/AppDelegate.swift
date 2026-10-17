@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         deps.meetingDetector.start()
         // Drops audio of meetings whose note is older than the retention (#74).
         deps.meetingRecorder.purgeOldAudio()
+        // Finishes or undoes OpenKnowledge vault writes a crash interrupted, then lists the pending approvals.
+        deps.pendingApprovals.bootstrap()
 
         deps.recordingOrchestrator.start()
         PasteKeyCode.startObserving()

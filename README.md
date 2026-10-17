@@ -30,6 +30,9 @@ Segure `Alt+N` e fale uma ideia. O texto vira uma nota com título e tags em `<p
   - `<pasta>/<Organização>.md` — nota-índice por organização (criada uma vez).
 - O áudio (`.caf`) é apagado após N dias (padrão 7) quando a nota já existe. "Reprocessar última reunião" no menu refaz a nota.
 
+### Modo OpenKnowledge
+Em Configurações → Reuniões dá para trocar o vault de Obsidian para **OpenKnowledge** e apontar para a raiz do projeto OK (a pasta com `.ok/`; o campo começa vazio). Nesse modo cada reunião processada vira uma **pendência**: o menu mostra "N reuniões aguardando aprovação" (a janela nunca abre sozinha), e "Revisar…" abre uma janela passo a passo: escolher o projeto (o sugerido vem marcado; dá para criar um novo), aprovar o registro da reunião e aprovar ou pular cada item de conhecimento destilado pelo Claude CLI (ADR, regra de negócio, gotcha, termo…), com Preview e Editor. "Gravar no vault" escreve tudo de uma vez: registro em `<projeto>/reunioes/`, transcrição em `<projeto>/reunioes/transcricoes/`, os docs aprovados e os links no `index.md`. Se algum doc mudou no vault desde a proposta, ele volta para revisão e nada é sobrescrito. Sem Claude CLI, a reunião ainda grava só com registro e transcrição. As notas de voz vão para `_inbox/diario/` e `_inbox/ideias/`.
+
 ## Instalação (para quem recebeu o repositório)
 
 O app não é distribuído assinado pela Apple. Você compila e instala localmente com um **certificado de assinatura próprio**, que é o que faz o macOS lembrar as permissões (Microfone, Acessibilidade) entre reinstalações. Sem ele, cada reinstalação faz o macOS "esquecer" o app.

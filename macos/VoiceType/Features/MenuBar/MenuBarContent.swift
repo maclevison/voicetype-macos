@@ -1,4 +1,5 @@
 import AppKit
+import Core
 import SwiftUI
 
 /// Content of the `MenuBarExtra` dropdown. `openWindow(id: MainWindowRouter.windowID)` routes
@@ -8,6 +9,7 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(AppDependencies.self) private var deps
     @Environment(MainWindowRouter.self) private var router
+    @Environment(ApprovalRouter.self) private var approvalRouter
 
     var body: some View {
         Button {
@@ -42,6 +44,20 @@ struct MenuBarContent: View {
             Label("Reprocessar última reunião", systemImage: "arrow.clockwise")
         }
 
+        let pending = deps.pendingApprovals.items
+        if !pending.isEmpty {
+            Menu {
+                ForEach(pending) { item in
+                    Menu(ApprovalStrings.item(item)) {
+                        Button(ApprovalStrings.review) { review(item) }
+                        Button(ApprovalStrings.discard) { confirmDiscard(item) }
+                    }
+                }
+            } label: {
+                Label(ApprovalStrings.pendingMenu(pending.count), systemImage: "tray.full")
+            }
+        }
+
         Divider()
 
         Button {
@@ -61,6 +77,29 @@ struct MenuBarContent: View {
         openWindow(id: MainWindowRouter.windowID)
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func review(_ item: PendingMeeting) {
+        approvalRouter.meetingDirectory = item.directory
+        openWindow(id: ApprovalRouter.windowID)
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    // After the menu closes, so the alert comes up in front.
+    private func confirmDiscard(_ item: PendingMeeting) {
+        let pending = deps.pendingApprovals
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = ApprovalStrings.discardTitle(item.title)
+            alert.informativeText = ApprovalStrings.discardBody
+            alert.addButton(withTitle: ApprovalStrings.discardConfirm)
+            alert.addButton(withTitle: ApprovalStrings.cancel)
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            pending.discard(item)
         }
     }
 }

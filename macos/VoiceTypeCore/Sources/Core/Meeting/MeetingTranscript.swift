@@ -184,10 +184,29 @@ public struct MeetingPipelineState: Codable, Sendable, Equatable {
     /// should try the summary again.
     public var summarized: Bool
 
-    public init(noteID: UUID = UUID(), notePath: String? = nil, transcriptPath: String? = nil, summarized: Bool = false) {
+    // OpenKnowledge mode. Optional so an older `pipeline.json` still decodes.
+    // The paths are vault-relative and only mean something with `okVault`.
+    /// The vault the meeting was approved into.
+    public var okVault: OKVaultIdentity?
+    public var okProject: String?
+    public var okRecordPath: String?
+    public var okTranscriptPath: String?
+    /// The approval proposal was built (counts as processed for retention).
+    public var okProcessed: Bool?
+
+    public init(
+        noteID: UUID = UUID(), notePath: String? = nil, transcriptPath: String? = nil, summarized: Bool = false,
+        okVault: OKVaultIdentity? = nil, okProject: String? = nil, okRecordPath: String? = nil,
+        okTranscriptPath: String? = nil, okProcessed: Bool? = nil
+    ) {
         self.noteID = noteID
         self.notePath = notePath
         self.transcriptPath = transcriptPath
         self.summarized = summarized
+        self.okVault = okVault
+        self.okProject = okProject
+        self.okRecordPath = okRecordPath
+        self.okTranscriptPath = okTranscriptPath
+        self.okProcessed = okProcessed
     }
 }

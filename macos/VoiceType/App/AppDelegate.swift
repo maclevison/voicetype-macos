@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         deps.meetingDetector.start()
         // Drops audio of meetings whose note is older than the retention (#74).
         deps.meetingRecorder.purgeOldAudio()
+        // Finishes or undoes OpenKnowledge vault writes a crash interrupted, then lists the pending approvals.
+        deps.pendingApprovals.bootstrap()
 
         deps.recordingOrchestrator.start()
         PasteKeyCode.startObserving()
@@ -142,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Close the meeting segments so the CAF headers + manifest are final.
         deps?.meetingRecorder.stop()
+        deps?.localModels.endSession()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

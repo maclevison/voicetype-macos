@@ -554,6 +554,25 @@ struct AppConfigCodableTests {
         #expect(decoded.voiceNoteShortcut == "Alt+N")
     }
 
+    @Test func vaultKindDefaultsAndTolerantDecode() throws {
+        #expect(AppConfig().meetingVaultKind == .obsidian)
+        #expect(AppConfig().openKnowledgeVaultPath == "")
+        let missing = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"schemaVersion":2}"#.utf8))
+        #expect(missing.meetingVaultKind == .obsidian)
+        #expect(missing.openKnowledgeVaultPath == "")
+        let garbage = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"schemaVersion":2,"meetingVaultKind":"notion"}"#.utf8))
+        #expect(garbage.meetingVaultKind == .obsidian)
+        let v1 = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"groqApiKey":"k"}"#.utf8))
+        #expect(v1.meetingVaultKind == .obsidian)
+        #expect(v1.openKnowledgeVaultPath == "")
+    }
+
+    @Test func localTranscriptionModel_defaults_and_missing_key() throws {
+        #expect(AppConfig().localTranscriptionModel == "openai_whisper-small")
+        let missing = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"schemaVersion":2}"#.utf8))
+        #expect(missing.localTranscriptionModel == "openai_whisper-small")
+    }
+
     @Test func meetingOrgsDefaultCatalogAndTolerantEntries() throws {
         #expect(AppConfig().meetingOrgs == [MeetingOrg(name: "Pessoal")])
         // Hand-edited entries may omit aliases/clients.

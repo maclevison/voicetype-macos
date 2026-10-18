@@ -393,13 +393,13 @@ Temperatura já é `0.2`; `max_tokens` 1024. Nenhum sozinho resolvia.
 
 ## G-020 — `WhisperKit` não-Sendable off-actor: fronteira segura hoje, bloqueante no Swift 6
 
-**Sintoma (futuro):** ao habilitar `-strict-concurrency=complete` no App target, o compilador rejeita a captura de `kit: WhisperKit` (não-`Sendable`) em `LocalTranscriber.transcribe(audio:lang:vocabulary:)` fora de qualquer ator — erro do tipo "capture of non-Sendable type in @Sendable closure".
+**Sintoma (futuro):** ao habilitar `-strict-concurrency=complete` no App target, o compilador rejeita a captura de `kit: WhisperKit` (não-`Sendable`) em `WhisperKitBackend.transcribe(samples:lang:vocabulary:)` fora de qualquer ator (ou recusa o `@unchecked Sendable` do backend) — erro do tipo "capture of non-Sendable type in @Sendable closure".
 
-**Por que é seguro hoje:** duas invariâncias combinadas evitam corrida: (1) `WhisperModelManager.transcriber()` só libera `kit` quando o estado é `.ready` — a partir daí o objeto não é mais mutado; (2) o pipeline é serializado (`RecordingOrchestrator` cancela a `Task` anterior antes de criar uma nova), garantindo no máximo um consumidor ativo de `kit` por vez.
+**Por que é seguro hoje:** duas invariâncias combinadas evitam corrida: (1) o `LocalModelManager` só entrega um `WhisperKitBackend` (via `transcriptionTarget()`) depois que `loadModels()` e `prewarmModels()` terminaram — a partir daí `kit` não é mais mutado; (2) o pipeline é serializado (`RecordingOrchestrator` cancela a `Task` anterior antes de criar uma nova), garantindo no máximo um consumidor ativo de `kit` por vez.
 
-**Workaround atual:** `LocalTranscriber` compila sem erro porque o App target não usa `-strict-concurrency=complete`. O doc-comment em `transcribe(audio:lang:vocabulary:)` documenta a invariância para revisão futura.
+**Workaround atual:** `WhisperKitBackend` é `@unchecked Sendable` e compila sem erro porque o App target não usa `-strict-concurrency=complete`. O doc-comment do `WhisperKitBackend` documenta a invariância para revisão futura.
 
-**Ação ao migrar:** isolar `LocalTranscriber` num ator próprio, ou marcar `WhisperKit` como `@unchecked Sendable` com justificativa das invariâncias acima. Ver FU-N10.
+**Ação ao migrar:** isolar `WhisperKitBackend` num ator próprio, ou marcar `WhisperKit` como `@unchecked Sendable` com justificativa das invariâncias acima. Ver FU-N10.
 
 ---
 
@@ -598,7 +598,7 @@ substituições, similaridade ≥0.5) descarta tudo.
 
 **Causa:** a Groq bloqueia IPs de saída de VPN com HTTP 403 `{"error":{"message":"Access denied. Please check your network settings."}}`. O `GroqClient` tratava 401 e 403 igual (`invalidKey`), e no modo `groq` não havia plano B.
 
-**Fix:** 401 → `GroqError.invalidKey`; 403 → `GroqError.networkBlocked(message:)` (mensagem PT-BR sugerindo desligar a VPN), sem retry. `PipelineError.isConnectivityFailure` (403, offline, timeout) faz o modo `groq` cair pro WhisperKit local via `FallbackTranscribe` — **só se o modelo já estiver carregado** (`WhisperModelManager.isReady`); esse caminho nunca baixa modelo.
+**Fix:** 401 → `GroqError.invalidKey`; 403 → `GroqError.networkBlocked(message:)` (mensagem PT-BR sugerindo desligar a VPN), sem retry. `PipelineError.isConnectivityFailure` (403, offline, timeout) faz o modo `groq` cair pro WhisperKit local via `FallbackTranscribe` — **só se o modelo já estiver carregado** (`LocalModelManager.isReady`); esse caminho nunca baixa modelo.
 
 **Referência:** `GroqClient.expectOK`, `RetryPolicy.isRetryable`, `PipelineError.isConnectivityFailure`, `RecordingOrchestrator.defaultPipelineFactory`.
 
@@ -631,3 +631,29 @@ substituições, similaridade ≥0.5) descarta tudo.
 **Fix:** não usar notificação do sistema para prompt com ação. Painel próprio não-ativante (`MeetingPromptPanel`, padrão Granola/Wispr): `.nonactivatingPanel`, `level = .statusBar`, `[.canJoinAllSpaces, .fullScreenAuxiliary]`, `orderFrontRegardless()`; botões chamam o código direto.
 
 **Referência:** `MeetingPromptPanel` em `MeetingDetector.swift`; PRs #88, #89.
+
+## G-036 — Whisper large-v3 + `promptTokens` devolve texto vazio
+
+**Sintoma:** com vocabulário, o Turbo 632 MB (e os outros large-v3) cola vazio. Os tokens do segmento saem `[50258, 50267, 50360, 50365, 50257]` (`SOT, pt, transcribe, <|0.00|>, EOT`). O Small com o mesmo código funciona.
+
+**Reprodução:** WhisperKit 1.0.0, `openai_whisper-large-v3-v20240930_turbo_632MB`, `DecodingOptions(language: "pt", temperature: 0, usePrefillPrompt: true, detectLanguage: false, promptTokens: tokenizer.encode(text: "Redis, ConfigStore").filter { $0 < specialTokenBegin }, chunkingStrategy: .vad)` sobre qualquer fala em PT de ~5 s.
+
+**Hipóteses testadas:** nenhuma destas resolve: `chunkingStrategy: nil`, prompt com espaço inicial (`" Redis, ConfigStore"`), `sampleLength: 100`, `temperatureFallbackCount: 3`, `withoutTimestamps: true`, `firstTokenLogProbThreshold: nil`. `usePrefillPrompt: false` devolve texto, mas só porque pula o `prefillDecoderInputs` inteiro: o prompt é ignorado e o idioma deixa de ser forçado. O formato do prefill está certo (`<|startofprev|> Red is , ĠConfig St ore <|startoftranscript|> <|pt|> <|transcribe|> <|0.00|>`).
+
+**Causa:** o `TextDecoder.decodeText` do WhisperKit 1.0.0 encerra o segmento quando o sampler prevê EOT, inclusive nas posições do prompt, cujo próximo token é forçado de qualquer jeito. Com o log `.debug`, o large-v3 prevê `<|endoftext|>` logo depois do `<|pt|>` forçado (índice 8 de 11) e o laço para antes do primeiro token real. O Small prevê `<|translate|>` ali e segue. No Python, o prefill roda num forward só e essas previsões são descartadas.
+
+**Fix:** `PromptSafeWhisperKit` (criado pelo `WhisperKitLoader.loadKit`) sobrescreve `setupTranscribeTask` e passa um `PromptSafeTextDecoder`, que delega tudo ao decoder do WhisperKit. Quando o prompt começa com `<|startofprev|>`, ele decodifica com um `ForcedPrefixSampler`, que nas posições forçadas zera o `completed` e o log-prob (este último por causa do `firstTokenLogProbThreshold`). `decodeText`/`predictLogits` são `public`, e não `open`, por isso o desvio fica no sampler. Validado no harness: Turbo + vocabulário dá texto nas 10 frases e nas 2 falas livres, e o vocabulário ajuda ("issue", "cache", "Swift Testing"). O Small sai idêntico com e sem o desvio. O Turbo passou a `supportsVocabulary: true`. Ao subir o WhisperKit, conferir se o laço já ignora EOT no prefill e, se ignorar, remover o desvio.
+
+**Referência:** `PromptSafeTextDecoder`, `ForcedPrefixSampler` em `WhisperKitBackend.swift`; `LocalModelCatalog`.
+
+## G-037 — Download do Whisper cancelado continua gravando depois de voltar
+
+**Sintoma:** depois de cancelar o download do Turbo, a pasta parcial reaparecia depois de apagada. Escolhendo o Turbo de novo logo em seguida, a tarefa da tentativa cancelada podia apagar pesos que a nova tentativa acabara de baixar.
+
+**Reprodução:** WhisperKit 1.0.0, `WhisperKit.download` do Turbo 632 MB, cancelar a tarefa no meio de um arquivo grande e apagar a pasta e o cache assim que a tarefa termina. A revisão reproduziu com um servidor local que responde depois de 1,2 s e o cancelamento antes de o worker ser registrado: a carga voltou em 0,54 s, e o worker, ao terminar, apagou o arquivo que a tentativa seguinte tinha posto no destino.
+
+**Causa:** o `Downloader` do HubApi (`ArgmaxCore/External/Hub/Downloader.swift`, `setUpDownload`) baixa numa `Task` própria, que ninguém espera. No cancelamento, `cancel()` transmite `.failed(URLError(.cancelled))` na hora e o `HubFileDownloader.download` (ou o `snapshot`, entre arquivos) volta, mas essa `Task` ainda grava o `.incomplete` e pode chamar `moveDownloadedFile`, que apaga o destino e recria as pastas intermediárias (`Downloader.swift`, `moveDownloadedFile`). Se o `cancel()` rodar antes de o `download` registrar o worker, o worker nem chega a ser cancelado e faz a transferência inteira, enquanto o `for await` da tarefa cancelada sai na hora. Nenhuma API diz quando essa tarefa termina; esperar silêncio no disco não prova nada. O FluidAudio (Parakeet) baixa num `withThrowingTaskGroup` e não tem o problema.
+
+**Fix:** isolar cada tentativa. O HubApi só escreve dentro do `downloadBase` (`HubApi.localRepoLocation`; os registros vão em `<repo>/.cache`), então o `LiveLocalModelLoader` passa uma pasta nova por tentativa (`.voicetype-downloads/<id>/<launch>-<uuid>/`) e só move o resultado para o lugar quando o download volta sem cancelamento. Nesse caso, toda tarefa que ele iniciou já terminou, porque cada arquivo só termina com o `.completed` que o worker transmite por último. Uma tentativa cancelada fica com a própria pasta, que nenhuma outra lê nem retoma (o prefixo da abertura distingue as pastas desta execução das de execuções anteriores, cujo processo morreu). Resíduo conhecido: o worker órfão ainda gasta banda até terminar o arquivo e pode deixar pastas vazias na pasta da tentativa cancelada, que somem na próxima tentativa ou no Apagar.
+
+**Referência:** `LiveLocalModelLoader.load`/`prepareDownload`/`publish` em `LocalSpeechBackend.swift`; `test_cancelled_attempt_never_touches_the_next_attempt_of_the_same_model`, `test_cancel_at_launch_of_resumed_download_removes_its_partials`.

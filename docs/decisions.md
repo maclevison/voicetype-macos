@@ -171,3 +171,27 @@ Decisões principais do native macOS build. Cada ADR registra contexto, escolha,
 - Apple Development / Developer ID — exige conta paga (ADR-007); quando houver, `VOICETYPE_SIGN_IDENTITY` aponta pra ela sem mudar o script.
 
 **Custo:** o cert não é trusted (Gatekeeper rejeita em `spctl`, irrelevante pra app local sem quarantine). Perder a chave = conceder permissões de novo uma vez. Backup da chave fica fora do repo.
+
+---
+
+## ADR-012 — Reuniões no OpenKnowledge via proposta + aprovação + escrita transacional direta no disco
+
+**Contexto:** o vault é um projeto OpenKnowledge editado ao mesmo tempo pelo servidor do OK (CRDT, auto-save, auto-commit), por agentes e pelo usuário. A spec pede que nada entre sem o usuário ver (reunião vira pendência, aprovação passo a passo), que nada seja sobrescrito sem revisão, que uma gravação pela metade nunca deixe link quebrado (registro sem transcrição, ADR citando reunião inexistente) e que fechar a janela ou o app morrer no meio não perca nem estrague nada. Anti-objetivos: abrir a janela sozinha, notificação pedindo aprovação, dependência de servidor rodando.
+
+**Decisão:** a reunião processada vira `ok-proposal.json`; a janela grava o progresso por geração; "Gravar" passa por `OKVaultWriter.commit`, que escreve os arquivos direto no disco do vault:
+- intenção durável primeiro (journal com `F_FULLFSYNC` + staging em `.ok/local/voicetype-staging/`, ignorado pelo git do OK);
+- troca atômica condicional: cada update confere o hash esperado e entra por `RENAME_SWAP`, a versão que saiu é conferida e guardada; create só onde não há arquivo;
+- recibo (`OKCommitReceipt`) no journal até o estado local ser concluído (`OKApprovalFinalizer`), então qualquer crash é terminado ou desfeito pelo próximo launch a partir do disco.
+
+O watcher do OK reconcilia a escrita externa no CRDT e o auto-commit a versiona (evidência: portão da Task 0, `macos/scripts/ok-write-probe.sh`, e o probe do planejamento: merge de 3 vias limpo do disco no Y.Doc, auto-commit em menos de 75 s, conteúdo intacto depois de restart). O app não usa `ok` CLI nem MCP.
+
+**Consequências:**
+- Sem dependência do servidor OK: grava com ele parado, e o próximo `ok start` reconcilia.
+- Nenhuma versão concorrente é apagada sem cópia: rollback só desfaz o que ainda é exatamente nosso; uma versão de terceiro escrita depois da nossa força a conclusão (todas as ops já foram aprovadas) e é preservada em `.ok/local/voicetype-preserved/`.
+- O `.okignore` não é usado (tira os arquivos também do git).
+- Custo: o writer (journal, classificação por estado do disco, recuperação) é a parte mais complexa do app e tem testes de crash em cada ponto.
+
+**Alternativas consideradas:**
+- **Cliente MCP (`ok mcp`) dentro do app** — escreveria pelo CRDT, mas exige o servidor rodando e um cliente MCP no app. É o **plano B** se a escrita externa deixar de sobreviver ao OK com editor conectado (portão da Task 0).
+- `ok` CLI por arquivo — sem transação entre arquivos, mesma dependência do servidor.
+- Escrever direto sem journal — crash no meio deixa links quebrados.

@@ -70,6 +70,12 @@ struct MeetingAudioRetentionTests {
         #expect(!MeetingAudioRetention.isExpired(Self.manifest(ageDays: 30), state: MeetingPipelineState(), now: Self.now, days: 7))
     }
 
+    @Test func okProcessedMeetingAudioExpires() {
+        #expect(MeetingAudioRetention.isExpired(Self.manifest(ageDays: 8), state: MeetingPipelineState(okProcessed: true), now: Self.now, days: 7))
+        #expect(!MeetingAudioRetention.isExpired(Self.manifest(ageDays: 8), state: MeetingPipelineState(okProcessed: false), now: Self.now, days: 7))
+        #expect(!MeetingAudioRetention.isExpired(Self.manifest(ageDays: 8), state: MeetingPipelineState(), now: Self.now, days: 7))
+    }
+
     @Test func zeroOrNegativeDaysKeepsForever() {
         for days in [0, -1] {
             #expect(!MeetingAudioRetention.isExpired(Self.manifest(ageDays: 365), state: Self.noted, now: Self.now, days: days))

@@ -35,17 +35,24 @@ public enum DailyNote {
 
     /// Returns `existing` (nil = file doesn't exist) with the idea appended to
     /// the end of `## Ideias`, creating the note or the section when missing.
-    /// User content is never removed — lines are only inserted.
+    /// User content is never removed — lines are only inserted. A new note
+    /// starts with `newFileHeader` (nil = the Obsidian `type: daily` frontmatter).
     /// ponytail: a `## ` line inside a code fence counts as a section break;
     /// only matters if a daily note has fenced markdown below `## Ideias`.
-    public static func inserting(_ text: String, at date: Date, into existing: String?, timeZone: TimeZone = .current) -> String {
+    public static func inserting(
+        _ text: String,
+        at date: Date,
+        into existing: String?,
+        timeZone: TimeZone = .current,
+        newFileHeader: String? = nil
+    ) -> String {
         let entry = entry(text, at: date, timeZone: timeZone)
         guard !entry.isEmpty else { return existing ?? "" }
 
         guard let existing else {
             let day = MeetingNoteRenderer.formatter("yyyy-MM-dd", timeZone).string(from: date)
-            return "---\ntype: daily\ndate: \(day)\ntags: [daily]\n---\n\n\(ideasHeading)\n\n"
-                + entry.joined(separator: "\n") + "\n"
+            let header = newFileHeader ?? "---\ntype: daily\ndate: \(day)\ntags: [daily]\n---\n\n"
+            return header + "\(ideasHeading)\n\n" + entry.joined(separator: "\n") + "\n"
         }
 
         var lines = existing.components(separatedBy: "\n")

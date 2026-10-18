@@ -39,7 +39,7 @@ macos/
 │   │   ├── Recording/
 │   │   │   ├── Shortcut/         ShortcutManager + custom CGEventTap HoldDetector (no third-party dep)
 │   │   │   ├── Audio/            AVAudioEngine AudioRecorder, WavEncoder, AudioDeviceResolver
-│   │   │   ├── Transcription/    LocalTranscriber (WhisperKit on-device) + WhisperModelManager
+│   │   │   ├── Transcription/    LocalModelManager (model picker) + LocalTranscriber, WhisperKit/Parakeet backends
 │   │   │   ├── Refinement/       LocalRefiner/LocalTranslator (FoundationModels), cursor context
 │   │   │   ├── Output/           Paster (AX insert, else NSPasteboard + synthesized Cmd+V)
 │   │   │   └── HUD/              recording indicator (notch / pill)
@@ -53,18 +53,20 @@ macos/
 │   │   ├── Config/               ConfigStore (actor) + AppConfig (Codable)
 │   │   ├── History/              HistoryStore (actor)
 │   │   ├── Pipeline/             Transcriber, Refiner, Translator, Pipeline (actor), fallbacks/guards
+│   │   ├── LocalModels/          LocalModelCatalog + LocalModelSelection (pure model-switch state machine)
 │   │   ├── UseCases/             Start/Stop recording, RunPipeline
 │   │   ├── Meeting/              transcript, summary (claude CLI), note/daily/idea renderers, calendar match
 │   │   ├── Learning/             edit alignment → vocabulary suggestions
+│   │   ├── OpenKnowledge/        OpenKnowledge vault: proposal, approval session, transactional OKVaultWriter
 │   │   └── GroqClient/           URLSession async/await
 │   └── Tests/CoreTests/          swift-testing
 ├── build/                        entitlements.plist, exportOptions.plist
 └── scripts/                      install.sh, make-icons.sh, release.sh
 ```
 
-Dictation: shortcut → `RecordingOrchestrator` → `AudioRecorder` (AVAudioEngine, 16 kHz mono, WAV) → `RunPipelineUseCase` → `Pipeline.run` (on-device Whisper, Groq fallback → on-device refine/translate, Groq fallback, raw text if both fail) → `Paster` → `HistoryStore.add`.
+Dictation: shortcut → `RecordingOrchestrator` → `AudioRecorder` (AVAudioEngine, 16 kHz mono, WAV) → `RunPipelineUseCase` → `Pipeline.run` (on-device model picked in Settings — Whisper Small/Turbo or Parakeet, via `LocalModelManager`; Groq fallback → on-device refine/translate, Groq fallback, raw text if both fail) → `Paster` → `HistoryStore.add`.
 
-Meetings: `MeetingDetector` notices a call → `MeetingRecorder` (mic + system audio) → `MeetingProcessor` (local transcription → `MeetingDiarizer` "Outro N" voices → `MeetingCalendar` invite → `ClaudeCLISummarizer`) → Markdown note + transcript in the Obsidian vault. Voice notes (`IdeaNote`) go to the daily note.
+Meetings: `MeetingDetector` notices a call → `MeetingRecorder` (mic + system audio) → `MeetingProcessor` (local transcription → `MeetingDiarizer` "Outro N" voices → `MeetingCalendar` invite → `ClaudeCLISummarizer`) → Markdown note + transcript in the Obsidian vault, or, in OpenKnowledge mode, a pending proposal approved step by step before anything is written to the vault (`docs/architecture.md`, ADR-012). Voice notes (`IdeaNote`) go to the daily note (`_inbox/` in OpenKnowledge mode).
 
 Key rules:
 

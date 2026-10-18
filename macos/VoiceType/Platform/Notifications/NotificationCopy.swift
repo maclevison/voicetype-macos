@@ -32,6 +32,9 @@ enum NotificationCopy {
         "Groq retornou erro: \(detail)"
     }
 
+    static let localModelNotReadyTitle = "Modelo local não está pronto"
+    static let localModelNotReadyBody  = "Aguarde o download e a preparação terminarem em Ajustes → Transcrição local."
+
     static let pipelineCancelledTitle = "Gravação cancelada"
     static let pipelineCancelledBody  = "A captura anterior foi descartada porque você iniciou uma nova."
 

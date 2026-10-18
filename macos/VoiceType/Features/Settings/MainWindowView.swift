@@ -59,7 +59,7 @@ struct MainWindowView: View {
         case .audio:
             AudioSection(snapshot: deps.configSnapshot, permissions: deps.permissionsChecker)
         case .localTranscription:
-            LocalTranscriptionSection(snapshot: deps.configSnapshot, models: deps.whisperModels)
+            LocalTranscriptionSection(snapshot: deps.configSnapshot, models: deps.localModels)
         case .localRefinement:
             LocalRefinementSection(snapshot: deps.configSnapshot)
         case .refineStyle:

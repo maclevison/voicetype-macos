@@ -120,11 +120,12 @@ extension RecordingOrchestrator {
         }
     }
 
-    // Checks that we have a Groq key + (unless the take doesn't paste, like a
-    // voice note) a capture target. On failure notifies + resets and returns
-    // false so the caller bails out.
+    // Checks that we have a Groq key when Groq is the only transcription path
+    // (engine "groq") + (unless the take doesn't paste, like a voice note) a
+    // capture target. Refine/translate without a key fall back to the raw text.
+    // On failure notifies + resets and returns false so the caller bails out.
     func preflight(cfg: AppConfig, requiresTarget: Bool, stateMachine: AppStateMachine) async -> Bool {
-        guard !cfg.groq.apiKey.isEmpty else {
+        guard cfg.transcriptionEngine != "groq" || !cfg.groq.apiKey.isEmpty else {
             await notifier.error(
                 title: NotificationCopy.missingGroqKeyTitle,
                 body: NotificationCopy.missingGroqKeyBody
@@ -168,6 +169,11 @@ extension RecordingOrchestrator {
             await notifier.error(
                 title: NotificationCopy.pasteFailedTitle,
                 body: ErrorPresenter.describe(pasterError)
+            )
+        case LocalTranscriber.LocalError.notReady:
+            await notifier.error(
+                title: NotificationCopy.localModelNotReadyTitle,
+                body: NotificationCopy.localModelNotReadyBody
             )
         default:
             await notifier.error(

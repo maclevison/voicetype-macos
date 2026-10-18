@@ -9,13 +9,13 @@ final class RecordingOrchestrator {
     /// `onDegraded` fires when an LLM pass fell back to the raw transcription
     /// because Groq rejected the request permanently (dead model, bad key). Only
     /// permanent rejections reach it — offline stays silent (G-025).
-    typealias PipelineFactory = @MainActor @Sendable (_ apiKey: String, _ transcriptionEngine: String, _ refineEngine: String, _ translateEngine: String, _ whisperModels: WhisperModelManager, _ refineOptions: RefineOptions, _ onDegraded: @escaping @Sendable (Pipeline.Mode, PipelineError) -> Void) -> Pipeline
+    typealias PipelineFactory = @MainActor @Sendable (_ apiKey: String, _ transcriptionEngine: String, _ refineEngine: String, _ translateEngine: String, _ localModels: LocalModelManager, _ refineOptions: RefineOptions, _ onDegraded: @escaping @Sendable (Pipeline.Mode, PipelineError) -> Void) -> Pipeline
 
     /// Default factory exposed as a stored `@Sendable` closure so it can be
     /// captured into `Task { … }` blocks without losing `@Sendable` under
     /// strict concurrency. `@MainActor` is required because local adapters
     /// (`LocalRefiner`, `LocalTranslator`, `AIAvailability`) are `@MainActor`.
-    static let defaultPipelineFactory: PipelineFactory = { apiKey, transcriptionEngine, refineEngine, translateEngine, whisperModels, refineOptions, onDegraded in
+    static let defaultPipelineFactory: PipelineFactory = { apiKey, transcriptionEngine, refineEngine, translateEngine, localModels, refineOptions, onDegraded in
         let groq = GroqClient(apiKey: apiKey)
         let groqTranscriber = Transcriber(groq: groq)
         let groqFn: Pipeline.TranscribeFn = { try await groqTranscriber.transcribe(audio: $0, lang: $1, vocabulary: $2) }
@@ -25,26 +25,33 @@ final class RecordingOrchestrator {
         case "groq":
             // Groq-first; on connectivity failure (VPN 403, offline, timeout) paste
             // via the local model if it's already loaded. Never downloads here (G-032).
-            let local = LocalTranscriber(manager: whisperModels)
+            let local = LocalTranscriber(manager: localModels)
             transcribeFn = FallbackTranscribe.make(
                 primary: groqFn,
                 fallback: { try await local.transcribe(audio: $0, lang: $1, vocabulary: $2) },
                 isPrimaryReady: { true },
                 shouldFallback: { error in
                     guard (error as? PipelineError)?.isConnectivityFailure == true else { return false }
-                    return await whisperModels.isReady
+                    return await localModels.isReady
                 }
             )
         case "local":
-            let local = LocalTranscriber(manager: whisperModels)
+            let local = LocalTranscriber(manager: localModels)
             transcribeFn = { try await local.transcribe(audio: $0, lang: $1, vocabulary: $2) }
         default: // "auto"
-            let local = LocalTranscriber(manager: whisperModels)
-            transcribeFn = FallbackTranscribe.make(
-                primary: { try await local.transcribe(audio: $0, lang: $1, vocabulary: $2) },
-                fallback: groqFn,
-                isPrimaryReady: { true }
-            )
+            let local = LocalTranscriber(manager: localModels)
+            let localFn: Pipeline.TranscribeFn = { try await local.transcribe(audio: $0, lang: $1, vocabulary: $2) }
+            if apiKey.isEmpty {
+                // Without a key Groq can only answer 401, which would mask the
+                // local "not ready" behind a Groq error.
+                transcribeFn = localFn
+            } else {
+                transcribeFn = FallbackTranscribe.make(
+                    primary: localFn,
+                    fallback: groqFn,
+                    isPrimaryReady: { true }
+                )
+            }
         }
 
         // Refine/translate: local-first (FoundationModels) with Groq fallback,
@@ -91,7 +98,7 @@ final class RecordingOrchestrator {
     let hud: HUDController
     let notifier: Notifier
     let soundFeedback: SoundFeedbackService
-    let whisperModels: WhisperModelManager
+    let localModels: LocalModelManager
     private var disconnectObserver: NSObjectProtocol?
 
     private var stateMachine: AppStateMachine?
@@ -125,7 +132,7 @@ final class RecordingOrchestrator {
         stateMachine: AppStateMachine? = nil,
         shortcutManager: ShortcutManager? = nil,
         soundFeedback: SoundFeedbackService? = nil,
-        whisperModels: WhisperModelManager,
+        localModels: LocalModelManager,
         editObserver: EditObserver? = nil
     ) {
         self.configStore = configStore
@@ -138,7 +145,7 @@ final class RecordingOrchestrator {
         self.stateMachine = stateMachine
         self.shortcutManager = shortcutManager
         self.soundFeedback = soundFeedback ?? SoundFeedbackService()
-        self.whisperModels = whisperModels
+        self.localModels = localModels
         self.editObserver = editObserver
     }
 
@@ -282,7 +289,10 @@ final class RecordingOrchestrator {
         guard await preflight(cfg: cfg, requiresTarget: !isVoiceNote, stateMachine: stateMachine) else { return }
         let target = capturedTarget
         let bundleID = isVoiceNote ? DailyNote.obsidianBundleID : (target?.bundleIdentifier ?? "")
-        let vault = URL(fileURLWithPath: (cfg.meetingNotesFolder as NSString).expandingTildeInPath, isDirectory: true)
+        let vaultKind = cfg.meetingVaultKind
+        let vault = vaultKind == .openKnowledge
+            ? OKVault.url(cfg.openKnowledgeVaultPath)
+            : URL(fileURLWithPath: (cfg.meetingNotesFolder as NSString).expandingTildeInPath, isDirectory: true)
 
         var pipelineMode: Pipeline.Mode = (capturedMode == .translate) ? .translate : .refine
         if pipelineMode == .refine,
@@ -294,7 +304,7 @@ final class RecordingOrchestrator {
         let translateTarget: String? = (pipelineMode == .translate) ? "en" : nil
 
         let pipeline = pipelineFactory(
-            cfg.groq.apiKey, cfg.transcriptionEngine, cfg.refineEngine, cfg.translateEngine, whisperModels,
+            cfg.groq.apiKey, cfg.transcriptionEngine, cfg.refineEngine, cfg.translateEngine, localModels,
             RefineOptions(vocabulary: cfg.vocabularyKeywords, style: RefineStyle.resolve(
                 bundleID: bundleID,
                 global: cfg.recording.refineStyle,
@@ -310,10 +320,14 @@ final class RecordingOrchestrator {
             paster: isVoiceNote
                 ? DailyNoteDeliveryAdapter(
                     vault: vault,
+                    kind: vaultKind,
                     cliPath: cfg.claudeCLIPath,
                     rawTranscript: { await pipeline.lastRawTranscript },
                     onSaved: { @MainActor [weak self] title in
-                        let note = DailyNote.url(in: vault, for: Date()).deletingPathExtension().lastPathComponent
+                        let daily = vaultKind == .openKnowledge
+                            ? OKInbox.dailyURL(in: vault, for: Date())
+                            : DailyNote.url(in: vault, for: Date())
+                        let note = daily.deletingPathExtension().lastPathComponent
                         if let title {
                             await self?.notifier.success(title: NotificationCopy.voiceNoteSavedTitle(title), body: note)
                         } else {

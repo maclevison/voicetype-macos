@@ -38,7 +38,7 @@ final class RecordingOrchestratorSmokeTests: XCTestCase {
             notifier: Notifier(),
             hudController: HUDController(),
             recorder: FakeRecorder(),
-            whisperModels: WhisperModelManager(),
+            localModels: LocalModelManager(persist: { _ in }),
             editObserver: EditObserver(store: SuggestionStore(fileURL: tempHistoryURL()))
         )
         var cfg = AppConfig()
@@ -72,7 +72,7 @@ final class RecordingOrchestratorSmokeTests: XCTestCase {
             recorder: recorder,
             stateMachine: stateMachine,
             shortcutManager: manager,
-            whisperModels: WhisperModelManager()
+            localModels: LocalModelManager(persist: { _ in })
         )
 
         await manager.applyConfig()
@@ -112,7 +112,7 @@ final class RecordingOrchestratorSmokeTests: XCTestCase {
             recorder: recorder,
             stateMachine: stateMachine,
             shortcutManager: manager,
-            whisperModels: WhisperModelManager()
+            localModels: LocalModelManager(persist: { _ in })
         )
 
         await manager.applyConfig()
@@ -148,7 +148,7 @@ final class RecordingOrchestratorSmokeTests: XCTestCase {
             recorder: recorder,
             stateMachine: stateMachine,
             shortcutManager: manager,
-            whisperModels: WhisperModelManager()
+            localModels: LocalModelManager(persist: { _ in })
         )
 
         await manager.applyConfig()
@@ -173,6 +173,82 @@ final class RecordingOrchestratorSmokeTests: XCTestCase {
         XCTAssertEqual(recorder.stopCalls, 1)
         let state = await stateMachine.state
         XCTAssertEqual(state, .idle)
+    }
+
+    // Groq-less local dictation is the real setup: only the "groq" engine needs the key.
+    @MainActor
+    func test_preflight_requires_groq_key_only_for_groq_engine() async {
+        let coordinator = RecordingOrchestrator(
+            configStore: ConfigStore.inMemory(),
+            historyStore: HistoryStore(fileURL: tempHistoryURL()),
+            notifier: Notifier(),
+            hudController: HUDController(),
+            recorder: FakeRecorder(),
+            localModels: LocalModelManager(loader: FakeLoader(), persist: { _ in })
+        )
+        let stateMachine = AppStateMachine()
+        var cfg = AppConfig()
+        cfg.groq.apiKey = ""
+
+        for engine in ["auto", "local"] {
+            cfg.transcriptionEngine = engine
+            let passed = await coordinator.preflight(cfg: cfg, requiresTarget: false, stateMachine: stateMachine)
+            XCTAssertTrue(passed, engine)
+        }
+        cfg.transcriptionEngine = "groq"
+        let groqWithoutKey = await coordinator.preflight(cfg: cfg, requiresTarget: false, stateMachine: stateMachine)
+        XCTAssertFalse(groqWithoutKey)
+        cfg.groq.apiKey = "gsk_test"
+        let groqWithKey = await coordinator.preflight(cfg: cfg, requiresTarget: false, stateMachine: stateMachine)
+        XCTAssertTrue(groqWithKey)
+    }
+
+    @MainActor
+    func test_default_factory_transcribes_locally_without_groq_key() async throws {
+        let loader = FakeLoader()
+        loader.downloaded.insert("openai_whisper-small")
+        let manager = LocalModelManager(loader: loader, persist: { _ in })
+        manager.bootstrap(selectedID: "openai_whisper-small")
+        await settle()
+        let backend = try loader.succeed("openai_whisper-small", text: "olá mundo")
+        await settle()
+        XCTAssertTrue(manager.isReady)
+
+        for (calls, engine) in ["auto", "local"].enumerated() {
+            let pipeline = RecordingOrchestrator.defaultPipelineFactory(
+                "", engine, "auto", "auto", manager, RefineOptions(), { _, _ in }
+            )
+            let text = try await pipeline.run(audio: oneSecondOfSilence, mode: .raw, lang: "pt", translateTarget: nil)
+            XCTAssertEqual(text, "olá mundo", engine)
+            XCTAssertEqual(backend.vocabularies.count, calls + 1, engine)
+        }
+    }
+
+    @MainActor
+    func test_default_factory_without_key_surfaces_local_not_ready() async {
+        let manager = LocalModelManager(loader: FakeLoader(), persist: { _ in })
+        XCTAssertFalse(manager.isReady)
+        let pipeline = RecordingOrchestrator.defaultPipelineFactory(
+            "", "auto", "auto", "auto", manager, RefineOptions(), { _, _ in }
+        )
+        do {
+            _ = try await pipeline.run(audio: oneSecondOfSilence, mode: .raw, lang: "pt", translateTarget: nil)
+            XCTFail("expected LocalError.notReady")
+        } catch LocalTranscriber.LocalError.notReady {
+            // The factory never tried Groq.
+        } catch {
+            XCTFail("expected LocalError.notReady, got \(error)")
+        }
+    }
+
+    private var oneSecondOfSilence: Data {
+        WavEncoder.encode(pcmInt16LE: Data(count: 32_000), sampleRate: 16_000, channels: 1)
+    }
+
+    /// Lets the manager's main-actor tasks run until they suspend again.
+    @MainActor
+    private func settle() async {
+        for _ in 0..<50 { await Task.yield() }
     }
 
     private func tempHistoryURL() -> URL {

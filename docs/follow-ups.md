@@ -12,6 +12,8 @@ Convenção: ao fechar, marcar `~~strikethrough~~` + commit SHA + data.
 
 ~~FU-N9 — `llama-3.3-70b` respondia/obedecia a transcrição em vez de refinar~~ **Resolved:** 02c64e5 (2026-06-18, PR #32) — falar pergunta/comando ("explica o que é Markdown") fazia o modelo responder em vez de refinar; user virava vetor de prompt injection. Fix espelha Sotto (`docs/Sotto/Sotto/Core/AIService.swift`): Groq JSON mode (`response_format: json_object` → `{"refined"/"translation"}`) + few-shot adversarial multi-turn + guard `isDegenerate` (fallback pro texto cru em loop runaway). Regras em prosa e delimitadores no turno `user` falharam antes (echo dos delimitadores + loop). Detalhado em gotcha G-018. Smoke real confirmou.
 
+~~FU-N16 — Modelo de transcrição local selecionável (precisão vs velocidade)~~ **Resolved:** 09e5cb9 (2026-10-17, branch `feat/local-model-picker`) — Ajustes → Transcrição local escolhe entre Whisper Small, Whisper Large v3 Turbo (632 MB) e Parakeet Ultra (macOS 15+), com download, progresso, cancelar e apagar. O vocabulário vale no Small e no Turbo (G-036); o Parakeet não usa. Ver `docs/architecture.md` → "Transcrição local".
+
 ---
 
 ## FU-N7 — Smoke manual AX-direct insertion (MAC-378)
@@ -116,9 +118,9 @@ No uso diário (gaps de segundos+ entre ditados) o device solta a tempo, então 
 
 **Severidade:** Minor
 
-`LocalTranscriber.transcribe(audio:lang:vocabulary:)` acessa `WhisperKit` (não-`Sendable`) fora de qualquer ator. Seguro hoje: `kit` é imutável após `WhisperModelManager` entrar em `.ready`, e o pipeline é serializado (cada nova gravação cancela a `Task` anterior — um único consumidor por vez). Nenhuma corrida é possível dentro dessas invariâncias.
+`WhisperKitBackend.transcribe(samples:lang:vocabulary:)` (chamado pelo `LocalTranscriber`) acessa `WhisperKit` (não-`Sendable`) fora de qualquer ator, e o backend é `@unchecked Sendable`. Seguro hoje: o `LocalModelManager` só cria o backend depois que `loadModels()` e `prewarmModels()` terminaram, e a partir daí `kit` não é mais mutado; o pipeline é serializado (cada nova gravação cancela a `Task` anterior — um único consumidor por vez). Nenhuma corrida é possível dentro dessas invariâncias.
 
-**Ação:** ao habilitar `-strict-concurrency=complete` no App target (migração Swift 6), o compilador vai rejeitar a captura de `kit`. Opções: (a) isolar `LocalTranscriber` num ator próprio; (b) marcar `WhisperKit` como `@unchecked Sendable` com comentário justificando a invariância; (c) reestruturar o factory do pipeline. Revisar gotcha G-020.
+**Ação:** ao habilitar `-strict-concurrency=complete` no App target (migração Swift 6), o compilador vai rejeitar a captura de `kit`. Opções: (a) isolar `WhisperKitBackend` num ator próprio; (b) marcar `WhisperKit` como `@unchecked Sendable` com comentário justificando a invariância; (c) reestruturar o factory do pipeline. Revisar gotcha G-020.
 
 **Quando:** ao ligar strict concurrency no App target.
 
@@ -192,54 +194,6 @@ Opcional: adicionar pós-processamento no `RawFallbackRefine` → se o texto cru
 
 ---
 
-## FU-N16 — Modelo Whisper local selecionável (precisão vs velocidade)
-
-**Severidade:** Medium
-
-Hoje o ASR local é fixo em `openai_whisper-small` (decisão da Fase 1) — escolhido por
-velocidade (~0.5s/áudio) sobre o `large-v3-turbo` (~3.5s). Em uso real, o `small`
-**erra palavras em PT-BR** (nomes próprios, termos técnicos). Refino (Groq/Apple) limpa
-pontuação/muletas mas **não conserta erro de reconhecimento do ASR** — o único lever é
-o modelo. Hoje o único contorno é trocar a transcrição pra `groq` (whisper-large
-remoto), o que abandona o on-device.
-
-**Ação:** tornar o variant do Whisper selecionável no Settings (seção "Transcrição
-local"), trade-off explícito velocidade↔precisão. Opções sugeridas: `small` (rápido,
-atual), `medium` (meio-termo), `large-v3-turbo` (preciso, ~3.5s). Mudanças:
-- `AppConfig.whisperModelVariant: String` (additivo, `decodeIfPresent`, default
-  `"openai_whisper-small"`, sem bump de `schemaVersion`).
-- `WhisperModelManager` passa a baixar/carregar o variant da config (hoje hardcoded);
-  cuidar de re-download ao trocar (cada variant é um download separado em
-  `App Support/Models`) e estado `downloading` por variant.
-- Picker no `LocalTranscriptionSection` + strings; nota de tamanho/velocidade por opção.
-- Smoke: trocar variant → baixa → transcreve; medir precisão/latência real no M4 Pro.
-
-**Por que não foi feito antes:** Fase 1 fixou `small` por YAGNI/velocidade (sem seletor
-de modelos — ver "Fora de escopo" do spec). Uso real mostrou que a precisão do `small`
-não basta pro autor → reabrir.
-
-**Considerar engine Parakeet (não só variants do Whisper):** o autor testou o Superwhisper
-em modo Parakeet (NVIDIA, via `FluidInference/FluidAudio`, rodando on-device em Apple
-Silicon) e achou **muito mais rápido** que Whisper (decoder TDT eficiente). O **Sotto já
-tem `ParakeetEngine` de referência** (`Sotto/Core/ParakeetEngine.swift` +
-`ModelManager.swift`, projeto de referência fora do repo). Isso amplia a FU de "variant do Whisper" para **"engine/modelo de
-ASR selecionável (Whisper variants + Parakeet)"**. Cuidados (do CLAUDE.md do Sotto):
-- Parakeet é English/EU e **sem vocabulary biasing** (o boost CTC foi implementado e
-  **rejeitado** — encoder English-only dá sinal fraco em PT; ver "Rejected: Parakeet
-  vocabulary boosting" no Sotto). Vocabulário (`promptTokens`) só funciona no Whisper.
-- **Parakeet v3** (`parakeet-tdt-0.6b-v3`) adicionou multilíngue europeu incluindo
-  **português** — avaliar a qualidade real em PT-BR antes de adotar; small-eval em áudio
-  PT-BR segurado (held-out), não só "parece rápido".
-- Dep externa nova (`FluidAudio`) — maior que trocar variant do Whisper; revisar peso de
-  build / entitlements / `Package.resolved` (lição da 1ª dep WhisperKit, G-020).
-- Decisão de design (lição Sotto): engine-specific behavior fica DENTRO do engine
-  (protocolo `TranscriptionEngine`), sem branch por-engine no orchestrator/UI.
-
-**Quando:** próximo ciclo de ASR; independente da Fase 2 (PR #36). Pode ser PR próprio.
-No brainstorm da FU-N16, decidir o escopo: só Whisper variants, ou já incluir Parakeet.
-
----
-
 ## FU-N17 — Tradução sai literal demais (calque do PT), não soa inglês nativo
 
 **Severidade:** Important (qualidade do output no uso diário)
@@ -292,6 +246,20 @@ anti-prompt-injection montada em G-018/G-019 (FU-N9). Três drivers, em ordem de
   (contam mensagens, derivam de `fewShot`) e não quebram.
 
 **Quando:** próximo toque em tradução; PR próprio, independente da FU-N16 (ASR).
+
+---
+
+## FU-N18 — Alucinação em silêncio nos modelos locais
+
+**Severidade:** Minor
+
+Medido no spike do seletor de modelos (2026-10-17), com 2 s de silêncio: os Whisper grandes (Turbo) alucinam "Legenda Adriana Zanotto", o Small devolve "[Música]" e o Parakeet devolve texto vazio. Um atalho apertado sem fala, ou uma gravação só com ruído, pode colar esse texto no app em foco. O texto vazio do Parakeet já cai no fluxo atual de "nada transcrito".
+
+**Ação:** filtrar a saída do ASR local antes do refino. Opções: lista de alucinações conhecidas (frases de legenda tipo "Legenda …", "[Música]", "Obrigado por assistir"), VAD/energia mínima no áudio antes de transcrever, ou o `noSpeechThreshold`/`no_speech_prob` do WhisperKit por segmento. Preferir sinais do próprio modelo (no-speech) à lista fixa, que só cobre o que já foi visto.
+
+**Cuidados:** não descartar fala curta legítima ("ok", "sim"). Testar com silêncio, ruído de teclado e fala de 1 s nos três modelos.
+
+**Quando:** próximo toque em ASR local. Fora do escopo do seletor de modelos (ver spec `docs/superpowers/specs/2026-10-17-local-model-picker-design.md`).
 
 ---
 

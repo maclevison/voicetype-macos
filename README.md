@@ -6,6 +6,9 @@ App de barra de menu para macOS: você segura um atalho, fala, e o texto transcr
 
 ## O que faz
 
+### Aprender a usar
+No primeiro launch depois de instalar, a janela "Aprender a usar o VoiceType" abre sozinha. Concluída ou fechada, ela não volta, e o item **"Aprender a usar o VoiceType…"** do menu a reabre a qualquer hora. Ela anda em passos (Anterior / Próximo / Concluir): Antes de começar (status ao vivo de Microfone, Acessibilidade, Notificações e do modelo local), Ditado, Mãos livres, Tradução, Nota de voz, Histórico, Reuniões e Personalize. Ditado, Mãos livres e Tradução têm prática de verdade: com seu atalho real, o texto é colado num campo da própria janela e o passo ganha "Feito!". Os atalhos mostrados vêm da sua config. Reabrir pelo menu começa do passo 1.
+
 ### Ditado
 - **Segure** o atalho (padrão na primeira execução: `Fn` em teclado Apple, senão `Control+Alt`), fale, **solte**: o texto refinado é colado no app em foco.
 - **Mãos livres:** toque duplo no atalho trava a gravação; outro toque encerra e cola. `Espaço` enquanto segura também trava. `Esc` cancela.
@@ -29,6 +32,9 @@ Segure `Alt+N` e fale uma ideia. O texto vira uma nota com título e tags em `<p
   - `<pasta>/Transcripts/AAAA/…md` — transcrição completa;
   - `<pasta>/<Organização>.md` — nota-índice por organização (criada uma vez).
 - O áudio (`.caf`) é apagado após N dias (padrão 7) quando a nota já existe. "Reprocessar última reunião" no menu refaz a nota.
+
+### Modo OpenKnowledge
+Em Configurações → Reuniões dá para trocar o vault de Obsidian para **OpenKnowledge** e apontar para a raiz do projeto OK (a pasta com `.ok/`; o campo começa vazio). Nesse modo cada reunião processada vira uma **pendência**: o menu mostra "N reuniões aguardando aprovação" (a janela nunca abre sozinha), e "Revisar…" abre uma janela passo a passo: escolher o projeto (o sugerido vem marcado; dá para criar um novo), aprovar o registro da reunião e aprovar ou pular cada item de conhecimento destilado pelo Claude CLI (ADR, regra de negócio, gotcha, termo…), com Preview e Editor. "Gravar no vault" escreve tudo de uma vez: registro em `<projeto>/reunioes/`, transcrição em `<projeto>/reunioes/transcricoes/`, os docs aprovados e os links no `index.md`. Se algum doc mudou no vault desde a proposta, ele volta para revisão e nada é sobrescrito. Sem Claude CLI, a reunião ainda grava só com registro e transcrição. As notas de voz vão para `_inbox/diario/` e `_inbox/ideias/`.
 
 ## Instalação (para quem recebeu o repositório)
 
@@ -160,7 +166,7 @@ end
 subgraph group_dictation["Dictation pipeline"]
   node_pipeline["Transcribe and transform<br/>[Pipeline.swift]"]
   node_localasr["Local transcription"]
-  node_whisper["Whisper model manager"]
+  node_whisper["Local model manager"]
   node_localrefine["Local refine and translate<br/>[LocalRefiner.swift]"]
   node_groqclient["Groq client<br/>[GroqClient.swift]"]
   node_runusecase["Run pipeline use case"]
@@ -238,7 +244,7 @@ class node_groq,node_focusedapp,node_obsidian toneIndigo
 | Recording HUD | [`HUDController.swift`](macos/VoiceType/Features/Recording/HUD/HUDController.swift) |
 | Transcribe and transform | [`Pipeline.swift`](macos/VoiceTypeCore/Sources/Core/Pipeline/Pipeline.swift) |
 | Local transcription | [`LocalTranscriber.swift`](macos/VoiceType/Features/Recording/Transcription/LocalTranscriber.swift) |
-| Whisper model manager | [`WhisperModelManager.swift`](macos/VoiceType/Features/Recording/Transcription/WhisperModelManager.swift) |
+| Local model manager | [`LocalModelManager.swift`](macos/VoiceType/Features/Recording/Transcription/LocalModelManager.swift) |
 | Local refine and translate | [`LocalRefiner.swift`](macos/VoiceType/Features/Recording/Refinement/LocalRefiner.swift) |
 | Groq client | [`GroqClient.swift`](macos/VoiceTypeCore/Sources/Core/GroqClient/GroqClient.swift) |
 | Run pipeline use case | [`RunPipelineUseCase.swift`](macos/VoiceTypeCore/Sources/Core/UseCases/RunPipelineUseCase.swift) |

@@ -26,7 +26,8 @@ final class Notifier {
     private let log = Logger(subsystem: "com.voicetype.app", category: "notifier")
     private let now: () -> Date
     private(set) var authorized: Bool = false
-    private var hasBootstrapped: Bool = false
+    /// The authorization request, shared by every `bootstrap()` caller.
+    private var bootstrapTask: Task<Void, Never>?
 
     /// Callback fired whenever the cached authorization state changes.
     /// `PermissionsChecker` consumes this to surface notification status in
@@ -54,13 +55,21 @@ final class Notifier {
         self.init(center: UNUserNotificationCenter.current(), now: Date.init)
     }
 
-    /// Called once at app launch. Idempotent.
+    /// Called once at app launch. Idempotent: a call while the request is
+    /// still in flight waits for it, so whoever awaits `bootstrap()` before
+    /// emitting sees the final `authorized`.
     func bootstrap() async {
-        guard !hasBootstrapped else {
-            log.info("bootstrap skipped — already done; authorized=\(self.authorized, privacy: .public)")
+        if let bootstrapTask {
+            log.info("bootstrap skipped — already requested; waiting for it")
+            await bootstrapTask.value
             return
         }
-        hasBootstrapped = true
+        let task = Task { await requestAuthorization() }
+        bootstrapTask = task
+        await task.value
+    }
+
+    private func requestAuthorization() async {
         log.info("bootstrap start: requesting [.alert, .sound]")
         do {
             authorized = try await center.requestAuthorization(options: [.alert, .sound])

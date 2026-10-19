@@ -4,6 +4,9 @@ final class SettingsSceneUITests: XCTestCase {
 
     func testSettingsRendersAllSidebarSections() throws {
         let app = XCUIApplication()
+        // The onboarding would open by itself on a fresh config and become
+        // `windows.firstMatch`.
+        app.launchArguments = ["--skip-onboarding"]
         app.launch()
         // Trigger ⌘, to open Settings. The app is .accessory so the Settings
         // scene becomes the only visible window.
@@ -21,7 +24,7 @@ final class SettingsSceneUITests: XCTestCase {
 
     func testGeneralSectionTestKeyShowsInvalidStatus() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-test-stub-groq-401"]
+        app.launchArguments = ["--ui-test-stub-groq-401", "--skip-onboarding"]
         app.launch()
         app.activate()
         app.typeKey(",", modifierFlags: .command)

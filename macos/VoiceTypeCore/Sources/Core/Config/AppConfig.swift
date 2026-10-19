@@ -88,6 +88,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var autoEnterEnabled: Bool
     public var vocabularyKeywords: String
     public var transcriptionEngine: String
+    /// On-device transcription model id (a `LocalModelCatalog` entry); unknown ids are handled at boot.
+    public var localTranscriptionModel: String
     public var refineEngine: String
     public var translateEngine: String
     public var continuityFallbackEnabled: Bool
@@ -118,6 +120,13 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// #79: hold shortcut that dictates an idea into today's daily note
     /// instead of pasting (accelerator syntax; empty = off).
     public var voiceNoteShortcut: String
+    /// Where meetings and voice notes go: Obsidian (`meetingNotesFolder`) or
+    /// the OpenKnowledge project at `openKnowledgeVaultPath`.
+    public var meetingVaultKind: MeetingVaultKind
+    /// Root of the OpenKnowledge project (the folder holding `.ok/`; `~` expanded at use; empty = not set).
+    public var openKnowledgeVaultPath: String
+    /// Set once the onboarding window was finished or closed; false shows it at launch.
+    public var onboardingCompleted: Bool
 
     public init(
         schemaVersion: Int = 2,
@@ -136,6 +145,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         autoEnterEnabled: Bool = false,
         vocabularyKeywords: String = "",
         transcriptionEngine: String = "auto",
+        localTranscriptionModel: String = LocalModelCatalog.defaultID,
         refineEngine: String = "auto",
         translateEngine: String = "auto",
         continuityFallbackEnabled: Bool = true,
@@ -151,7 +161,10 @@ public struct AppConfig: Codable, Equatable, Sendable {
         meetingOrgs: [MeetingOrg] = MeetingOrg.defaults,
         meetingDetectionMode: String = "ask",
         meetingAudioRetentionDays: Int = 7,
-        voiceNoteShortcut: String = "Alt+N"
+        voiceNoteShortcut: String = "Alt+N",
+        meetingVaultKind: MeetingVaultKind = .obsidian,
+        openKnowledgeVaultPath: String = "",
+        onboardingCompleted: Bool = false
     ) {
         self.schemaVersion = schemaVersion
         self.groq = groq
@@ -169,6 +182,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.autoEnterEnabled = autoEnterEnabled
         self.vocabularyKeywords = vocabularyKeywords
         self.transcriptionEngine = transcriptionEngine
+        self.localTranscriptionModel = localTranscriptionModel
         self.refineEngine = refineEngine
         self.translateEngine = translateEngine
         self.continuityFallbackEnabled = continuityFallbackEnabled
@@ -185,6 +199,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.meetingDetectionMode = meetingDetectionMode
         self.meetingAudioRetentionDays = meetingAudioRetentionDays
         self.voiceNoteShortcut = voiceNoteShortcut
+        self.meetingVaultKind = meetingVaultKind
+        self.openKnowledgeVaultPath = openKnowledgeVaultPath
+        self.onboardingCompleted = onboardingCompleted
     }
 
     // MARK: - Codable with v1→v2 migration
@@ -200,6 +217,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case autoEnterEnabled
         case vocabularyKeywords
         case transcriptionEngine
+        case localTranscriptionModel
         case refineEngine
         case translateEngine
         case continuityFallbackEnabled
@@ -216,6 +234,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
         case meetingDetectionMode
         case meetingAudioRetentionDays
         case voiceNoteShortcut
+        case meetingVaultKind
+        case openKnowledgeVaultPath
+        case onboardingCompleted
     }
 
     // v1 flat keys used only during decode migration
@@ -247,6 +268,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         try c.encode(autoEnterEnabled, forKey: .autoEnterEnabled)
         try c.encode(vocabularyKeywords, forKey: .vocabularyKeywords)
         try c.encode(transcriptionEngine, forKey: .transcriptionEngine)
+        try c.encode(localTranscriptionModel, forKey: .localTranscriptionModel)
         try c.encode(refineEngine, forKey: .refineEngine)
         try c.encode(translateEngine, forKey: .translateEngine)
         try c.encode(continuityFallbackEnabled, forKey: .continuityFallbackEnabled)
@@ -263,6 +285,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
         try c.encode(meetingDetectionMode, forKey: .meetingDetectionMode)
         try c.encode(meetingAudioRetentionDays, forKey: .meetingAudioRetentionDays)
         try c.encode(voiceNoteShortcut, forKey: .voiceNoteShortcut)
+        try c.encode(meetingVaultKind, forKey: .meetingVaultKind)
+        try c.encode(openKnowledgeVaultPath, forKey: .openKnowledgeVaultPath)
+        try c.encode(onboardingCompleted, forKey: .onboardingCompleted)
     }
 
     public init(from decoder: Decoder) throws {
@@ -285,6 +310,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
             self.vocabularyKeywords = try c2.decodeIfPresent(String.self, forKey: .vocabularyKeywords) ?? defaults.vocabularyKeywords
             self.transcriptionEngine =
                 try c2.decodeIfPresent(String.self, forKey: .transcriptionEngine) ?? defaults.transcriptionEngine
+            self.localTranscriptionModel =
+                try c2.decodeIfPresent(String.self, forKey: .localTranscriptionModel) ?? defaults.localTranscriptionModel
             self.refineEngine =
                 try c2.decodeIfPresent(String.self, forKey: .refineEngine) ?? defaults.refineEngine
             self.translateEngine =
@@ -303,6 +330,13 @@ public struct AppConfig: Codable, Equatable, Sendable {
             self.meetingDetectionMode = try c2.decodeIfPresent(String.self, forKey: .meetingDetectionMode) ?? defaults.meetingDetectionMode
             self.meetingAudioRetentionDays = try c2.decodeIfPresent(Int.self, forKey: .meetingAudioRetentionDays) ?? defaults.meetingAudioRetentionDays
             self.voiceNoteShortcut = try c2.decodeIfPresent(String.self, forKey: .voiceNoteShortcut) ?? defaults.voiceNoteShortcut
+            // Raw string, not MeetingVaultKind: an unknown value opens in Obsidian mode instead of throwing.
+            self.meetingVaultKind = (try c2.decodeIfPresent(String.self, forKey: .meetingVaultKind))
+                .flatMap(MeetingVaultKind.init(rawValue:)) ?? defaults.meetingVaultKind
+            self.openKnowledgeVaultPath =
+                try c2.decodeIfPresent(String.self, forKey: .openKnowledgeVaultPath) ?? defaults.openKnowledgeVaultPath
+            self.onboardingCompleted =
+                try c2.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? defaults.onboardingCompleted
             self.groq = try c2.decodeIfPresent(GroqConfig.self, forKey: .groq) ?? defaults.groq
             self.shortcuts = try c2.decodeIfPresent(ShortcutConfig.self, forKey: .shortcuts) ?? defaults.shortcuts
             self.recording = try c2.decodeIfPresent(RecordingConfig.self, forKey: .recording) ?? defaults.recording
@@ -321,6 +355,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
             self.autoEnterEnabled = defaults.autoEnterEnabled
             self.vocabularyKeywords = defaults.vocabularyKeywords
             self.transcriptionEngine = defaults.transcriptionEngine
+            self.localTranscriptionModel = defaults.localTranscriptionModel
             self.refineEngine = defaults.refineEngine
             self.translateEngine = defaults.translateEngine
             self.continuityFallbackEnabled = defaults.continuityFallbackEnabled
@@ -337,6 +372,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
             self.meetingDetectionMode = defaults.meetingDetectionMode
             self.meetingAudioRetentionDays = defaults.meetingAudioRetentionDays
             self.voiceNoteShortcut = defaults.voiceNoteShortcut
+            self.meetingVaultKind = defaults.meetingVaultKind
+            self.openKnowledgeVaultPath = defaults.openKnowledgeVaultPath
+            self.onboardingCompleted = defaults.onboardingCompleted
             self.groq = GroqConfig(
                 apiKey: try c1.decodeIfPresent(String.self, forKey: .groqApiKey) ?? ""
             )

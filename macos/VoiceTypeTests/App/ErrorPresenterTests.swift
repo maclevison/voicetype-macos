@@ -126,4 +126,11 @@ final class ErrorPresenterTests: XCTestCase {
             "O app em foco não recebeu o texto. Ele ficou na área de transferência — cole com Cmd+V."
         )
     }
+
+    func test_pasterError_focusMoved() {
+        XCTAssertEqual(
+            ErrorPresenter.describe(PasterError.focusMoved),
+            "O campo de destino mudou. O texto ficou na área de transferência — cole com Cmd+V."
+        )
+    }
 }

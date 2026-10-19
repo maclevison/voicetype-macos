@@ -27,6 +27,7 @@ enum ErrorPresenter {
         case .noEditableField: return "Nenhum campo de texto em foco. O texto ficou na área de transferência — cole com Cmd+V."
         case .clipboardWriteFailed: return "Não foi possível escrever na área de transferência."
         case .pasteNotConsumed: return "O app em foco não recebeu o texto. Ele ficou na área de transferência — cole com Cmd+V."
+        case .focusMoved: return "O campo de destino mudou. O texto ficou na área de transferência — cole com Cmd+V."
         }
     }
 }

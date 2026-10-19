@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Core
 
@@ -13,6 +14,19 @@ enum MainDestination: Hashable {
 final class MainWindowRouter {
     static let windowID = "main"
     var selection: MainDestination? = .settings(.general)
+}
+
+extension MainWindowRouter {
+    /// Select first, so an already-open window switches pane and a new one
+    /// opens on it. The Window scene's onAppear flips the policy; activating
+    /// on the next cycle makes the window key and visible.
+    func show(_ destination: MainDestination, using openWindow: OpenWindowAction) {
+        selection = destination
+        openWindow(id: Self.windowID)
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
 }
 
 struct MainWindowView: View {
@@ -59,7 +73,7 @@ struct MainWindowView: View {
         case .audio:
             AudioSection(snapshot: deps.configSnapshot, permissions: deps.permissionsChecker)
         case .localTranscription:
-            LocalTranscriptionSection(snapshot: deps.configSnapshot, models: deps.whisperModels)
+            LocalTranscriptionSection(snapshot: deps.configSnapshot, models: deps.localModels)
         case .localRefinement:
             LocalRefinementSection(snapshot: deps.configSnapshot)
         case .refineStyle:

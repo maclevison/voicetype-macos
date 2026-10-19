@@ -35,4 +35,15 @@ public enum FocusedApp {
             focusedElement: AXElementRef.focused(inApp: app.processIdentifier)
         )
     }
+
+    /// VoiceType itself as the target, without any AX query (no focused
+    /// element). Only the onboarding practice uses it.
+    @MainActor public static func ownApp() -> FrontmostAppSnapshot {
+        let bundleID = Bundle.main.bundleIdentifier ?? ""
+        return FrontmostAppSnapshot(
+            bundleIdentifier: bundleID,
+            processIdentifier: ProcessInfo.processInfo.processIdentifier,
+            localizedName: NSRunningApplication.current.localizedName ?? bundleID
+        )
+    }
 }

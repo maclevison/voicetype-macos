@@ -26,6 +26,7 @@ struct PasterDeliveryAdapter: PasterDelivery {
 /// adds title + tags) into its own note under `Ideas/`, and today's daily note
 /// gets a `- HH:mm [[note|Título]]` link. If the CLI is missing/fails/times out,
 /// the refined text goes straight into the daily (the pre-assistant behavior).
+/// In OpenKnowledge mode both land in the vault's `_inbox/` (`OKInbox`).
 /// On a write failure the text goes to the clipboard so the idea isn't lost.
 struct DailyNoteDeliveryAdapter: PasterDelivery {
     struct WriteFailed: Error {
@@ -35,6 +36,8 @@ struct DailyNoteDeliveryAdapter: PasterDelivery {
     private static let log = Logger(subsystem: "VoiceType", category: "VoiceNote")
 
     let vault: URL
+    /// `AppConfig.meetingVaultKind`: Obsidian folder or OpenKnowledge `_inbox/`.
+    let kind: MeetingVaultKind
     /// `AppConfig.claudeCLIPath` (nil = default install locations).
     let cliPath: String?
     /// Raw ASR of this take, kept in the idea note as "Transcrição original".
@@ -46,18 +49,33 @@ struct DailyNoteDeliveryAdapter: PasterDelivery {
         let date = Date()
         let idea = await polish(text, original: await rawTranscript() ?? text, at: date)
         do {
-            if let idea {
-                let note = try idea.write(to: vault)
-                try DailyNote.append(DailyNote.link(to: note, title: idea.title), at: date, to: vault)
-            } else {
-                try DailyNote.append(text, at: date, to: vault)
+            switch kind {
+            case .obsidian:
+                if let idea {
+                    let note = try idea.write(to: vault)
+                    try DailyNote.append(DailyNote.link(to: note, title: idea.title), at: date, to: vault)
+                } else {
+                    try DailyNote.append(text, at: date, to: vault)
+                }
+            case .openKnowledge:
+                guard OKVault.isProjectRoot(vault) else {
+                    throw WriteFailed(detail: vault == OKVault.unset
+                        ? "Nenhum vault OpenKnowledge configurado em Ajustes → Reuniões."
+                        : "Vault OpenKnowledge inválido: \(vault.path)")
+                }
+                if let idea {
+                    let note = try OKInbox.writeIdea(idea, to: vault)
+                    try OKInbox.appendToDaily(OKInbox.link(toIdea: note, title: idea.title, vault: vault), at: date, to: vault)
+                } else {
+                    try OKInbox.appendToDaily(text, at: date, to: vault)
+                }
             }
         } catch {
             await MainActor.run {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
             }
-            throw WriteFailed(detail: error.localizedDescription)
+            throw error as? WriteFailed ?? WriteFailed(detail: error.localizedDescription)
         }
         await onSaved(idea?.title)
     }

@@ -29,6 +29,18 @@ public struct AXElementRef: @unchecked Sendable, Equatable {
     }
 }
 
+// A focused element's owner and AXIdentifier. The onboarding practice requires
+// this exact pair to paste (`Paster.paste(requiredField:)`).
+public struct FocusedField: Equatable, Sendable {
+    public let pid: pid_t
+    public let identifier: String?
+
+    public init(pid: pid_t, identifier: String?) {
+        self.pid = pid
+        self.identifier = identifier
+    }
+}
+
 public enum FocusEditability: Sendable, Equatable {
     case editable
     // Confirmed: nothing to paste into. Callers skip Cmd+V.
@@ -42,7 +54,14 @@ public protocol AccessibilityWriterProtocol: Sendable {
     // Returns true iff the focused element's value/selectedText/selectedRange
     // demonstrably changed — apps that report AX success but ignore the write
     // (e.g. some Electron, secure inputs) yield false so the caller can fall back.
-    func tryInsert(text: String) -> Bool
+    // With `required`, the focused text element is read once, and the write is
+    // skipped (false) unless that same element has the required pid and
+    // AXIdentifier — a focus change mid-check can't redirect the write.
+    func tryInsert(text: String, required: FocusedField?) -> Bool
+
+    // The system-wide focused element (the one that gets the keyboard, so
+    // Cmd+V): its pid and AXIdentifier. Nil when AX gives no answer.
+    func systemFocusedField() -> FocusedField?
 
     // Read-only probe: returns true when the system-focused element has a
     // text-bearing AX role. Used to gate auto-Enter so Return is not dispatched
@@ -56,11 +75,18 @@ public protocol AccessibilityWriterProtocol: Sendable {
     func prepareFocus(target snapshot: FrontmostAppSnapshot) -> FocusEditability
 }
 
+public extension AccessibilityWriterProtocol {
+    func tryInsert(text: String) -> Bool {
+        tryInsert(text: text, required: nil)
+    }
+}
+
 public struct SystemAccessibilityWriter: AccessibilityWriterProtocol {
     public init() {}
 
-    public func tryInsert(text: String) -> Bool {
+    public func tryInsert(text: String, required: FocusedField?) -> Bool {
         guard let element = Self.focusedTextElement() else { return false }
+        if let required, Self.field(of: element) != required { return false }
         guard let before = Self.focusedTextState(for: element) else { return false }
 
         let result = AXUIElementSetAttributeValue(
@@ -76,6 +102,10 @@ public struct SystemAccessibilityWriter: AccessibilityWriterProtocol {
 
     public func hasFocusedTextField() -> Bool {
         Self.focusedTextElement() != nil
+    }
+
+    public func systemFocusedField() -> FocusedField? {
+        Self.systemFocusedElement().flatMap(Self.field(of:))
     }
 
     public func prepareFocus(target snapshot: FrontmostAppSnapshot) -> FocusEditability {
@@ -155,13 +185,24 @@ public struct SystemAccessibilityWriter: AccessibilityWriterProtocol {
         let selectedRange: NSRange?
     }
 
-    private static func focusedTextElement() -> AXUIElement? {
+    private static func systemFocusedElement() -> AXUIElement? {
         let systemWide = AXUIElementCreateSystemWide()
         var focused: AnyObject?
         guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let element = focused as! AXUIElement? else {
             return nil
         }
+        return element
+    }
+
+    private static func field(of element: AXUIElement) -> FocusedField? {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        return FocusedField(pid: pid, identifier: stringAttribute(kAXIdentifierAttribute as CFString, from: element))
+    }
+
+    private static func focusedTextElement() -> AXUIElement? {
+        guard let element = systemFocusedElement() else { return nil }
 
         var roleValue: AnyObject?
         guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue) == .success,

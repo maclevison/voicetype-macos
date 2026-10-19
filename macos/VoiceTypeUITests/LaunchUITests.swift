@@ -7,6 +7,8 @@ final class LaunchUITests: XCTestCase {
 
     func test_appLaunchesAndStaysRunning() {
         let app = XCUIApplication()
+        // The onboarding would open by itself on a fresh config.
+        app.launchArguments = ["--skip-onboarding"]
         app.launch()
 
         // Menu-bar-only apps (LSUIElement) typically settle into .runningBackground

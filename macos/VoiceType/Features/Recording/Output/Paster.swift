@@ -14,6 +14,10 @@ public enum PasterError: Error, Equatable {
     // Clipboard+Cmd+V fallback: no app read the clipboard within the timeout,
     // so the paste most likely did not land. Text is left on the clipboard.
     case pasteNotConsumed
+    // `requiredField` given, but the system focus is not that editor (another
+    // field, or another app kept the keyboard): nothing inserted nor pasted,
+    // the text is left on the clipboard.
+    case focusMoved
 }
 
 public actor Paster {
@@ -61,21 +65,37 @@ public actor Paster {
     // When `autoEnter` is true and a text field is focused, dispatches a Return
     // after the paste lands. Auto-Enter is best-effort and never surfaces as a
     // PasterError.
+    // With `requiredField` (onboarding practice), nothing is refocused: the
+    // system focus must be that exact editor (pid + AXIdentifier) before the AX
+    // write, in the write itself, and again right before Cmd+V; otherwise
+    // `.focusMoved` with the text on the clipboard.
     public func paste(
         text: String,
         target snapshot: FrontmostAppSnapshot,
-        autoEnter: Bool = false
+        autoEnter: Bool = false,
+        requiredField: FocusedField? = nil
     ) async throws {
         try await activate(target: snapshot)
 
-        if accessibility.prepareFocus(target: snapshot) == .notEditable {
+        if let requiredField {
+            try await ensureSystemFocus(is: requiredField, text: text)
+        } else if accessibility.prepareFocus(target: snapshot) == .notEditable {
             pasteboard.writeString(text)
             throw PasterError.noEditableField
         }
 
-        if accessibility.tryInsert(text: text) {
+        let inserted = if let requiredField {
+            await onMain { $0.tryInsert(text: text, required: requiredField) }
+        } else {
+            accessibility.tryInsert(text: text, required: nil)
+        }
+        if inserted {
             await dispatchAutoEnterIfNeeded(autoEnter)
             return
+        }
+
+        if let requiredField {
+            try await ensureSystemFocus(is: requiredField, text: text)
         }
 
         let originalClipboard = pasteboard.snapshot()
@@ -104,6 +124,22 @@ public actor Paster {
         restoreClipboard(originalClipboard, ifStillAt: ourChangeCount)
 
         await dispatchAutoEnterIfNeeded(autoEnter)
+    }
+
+    private func ensureSystemFocus(is field: FocusedField, text: String) async throws {
+        guard await onMain({ $0.systemFocusedField() }) == field else {
+            pasteboard.writeString(text)
+            throw PasterError.focusMoved
+        }
+    }
+
+    // A required field lives in VoiceType itself (onboarding practice). AX on
+    // an element of our own process skips IPC and runs AppKit right on the
+    // calling thread; off the main thread, a write into the NSTextView
+    // deadlocks against its layout.
+    private func onMain<T: Sendable>(_ body: @MainActor @Sendable (AccessibilityWriterProtocol) -> T) async -> T {
+        let accessibility = accessibility
+        return await MainActor.run { body(accessibility) }
     }
 
     private func waitForRead(_ payload: LazyPasteboardString) async -> Bool {

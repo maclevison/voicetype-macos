@@ -1,4 +1,5 @@
 import AppKit
+import Core
 import SwiftUI
 
 @main
@@ -7,6 +8,7 @@ struct VoiceTypeApp: App {
     @State private var deps: AppDependencies
     @State private var historyViewModel: HistoryViewModel
     @State private var router = MainWindowRouter()
+    @State private var approvalRouter = ApprovalRouter()
 
     init() {
         // Build the composition graph once and hand the same instance to the
@@ -29,13 +31,10 @@ struct VoiceTypeApp: App {
             MenuBarContent()
                 .environment(deps)
                 .environment(router)
+                .environment(approvalRouter)
         } label: {
-            // Red dot next to the icon while a meeting records — visible without opening the menu.
-            if deps.meetingRecorder.isRecording {
-                Image(nsImage: MenuBarIconRecording.image)
-            } else {
-                Image("MenuBarIcon")
-            }
+            MenuBarLabel()
+                .environment(deps)
         }
         .menuBarExtraStyle(.menu)
 
@@ -53,6 +52,60 @@ struct VoiceTypeApp: App {
         }
         .windowResizability(.contentMinSize)
         .commandsRemoved()
+
+        // OpenKnowledge approvals: opened only from the menu's pending list,
+        // never by itself.
+        Window(ApprovalStrings.windowTitle, id: ApprovalRouter.windowID) {
+            ApprovalWindowView()
+                .environment(deps)
+                .environment(approvalRouter)
+                .onAppear { ActivationPolicyTracker.enter() }
+                .onDisappear { ActivationPolicyTracker.leave() }
+        }
+        .windowResizability(.contentMinSize)
+        .commandsRemoved()
+
+        // Onboarding: step-by-step window with real practice takes. The menu
+        // reopens it at any time, always from step 1.
+        Window(OnboardingStrings.windowTitle, id: OnboardingWindow.id) {
+            OnboardingWindowView()
+                .environment(deps)
+                .environment(router)
+                .onAppear { ActivationPolicyTracker.enter() }
+                .onDisappear { ActivationPolicyTracker.leave() }
+        }
+        .windowResizability(.contentSize)
+        .commandsRemoved()
+    }
+}
+
+/// The `MenuBarExtra` label, the only view built at launch: it also opens the
+/// onboarding by itself while it was never finished or closed. The `.task` sits
+/// on the stable container, not on each `Image`, so swapping in the red dot
+/// doesn't run it again; `checkedOnboarding` guards against any other rerun.
+struct MenuBarLabel: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(AppDependencies.self) private var deps
+    @State private var checkedOnboarding = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Red dot next to the icon while a meeting records — visible without opening the menu.
+            if deps.meetingRecorder.isRecording {
+                Image(nsImage: MenuBarIconRecording.image)
+            } else {
+                Image("MenuBarIcon")
+            }
+        }
+        .task {
+            guard !checkedOnboarding else { return }
+            checkedOnboarding = true
+            guard await OnboardingLaunch.shouldAutoOpen(store: deps.configStore) else { return }
+            openWindow(id: OnboardingWindow.id)
+            DispatchQueue.main.async {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
     }
 }
 

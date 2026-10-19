@@ -121,9 +121,11 @@ public struct MeetingManifest: Codable, Sendable, Equatable {
 public enum MeetingAudioRetention {
     /// True when `manifest`'s audio may go: retention on (`days > 0`), started
     /// more than `days` ago, and the pipeline already wrote a note (summarized
-    /// or not). In-progress recordings are never old enough.
+    /// or not) or, in OpenKnowledge mode, built its approval proposal (the
+    /// transcript is cached; approving doesn't need the audio). In-progress
+    /// recordings are never old enough.
     public static func isExpired(_ manifest: MeetingManifest, state: MeetingPipelineState?, now: Date, days: Int) -> Bool {
-        guard days > 0, state?.notePath != nil else { return false }
+        guard days > 0, state?.notePath != nil || state?.okProcessed == true else { return false }
         return now.timeIntervalSince(manifest.startedAt) > TimeInterval(days) * 86_400
     }
 

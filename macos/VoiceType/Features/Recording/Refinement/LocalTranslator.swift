@@ -1,6 +1,8 @@
 import Foundation
 import FoundationModels
+import NaturalLanguage
 import os
+import Translation
 
 @available(macOS 26, *)
 @Generable
@@ -38,5 +40,42 @@ struct LocalTranslator {
         )
         logger.info("translated locally (FoundationModels): \(response.content.text.count, privacy: .public) chars, \(response.content.sourceLanguage, privacy: .public)→\(response.content.targetLanguage, privacy: .public)")
         return response.content.text
+    }
+}
+
+// On-device translation through Apple's Translation framework, used when Apple
+// Intelligence is off. The source language is detected from the text. Only a
+// pair already installed is used: a missing one throws (never a download
+// prompt in the middle of a take), so the caller falls back.
+@available(macOS 26, *)
+struct AppleTranslationTranslator {
+    struct Unavailable: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    private static let logger = Logger(subsystem: "dev.voicetype.app", category: "AppleTranslation")
+
+    func translate(text: String, target: String) async throws -> String {
+        guard let source = Self.sourceLanguage(of: text) else {
+            throw Unavailable(description: "source language not detected")
+        }
+        let targetLanguage = Locale.Language(identifier: target)
+        guard await Self.isInstalled(from: source, to: targetLanguage) else {
+            throw Unavailable(description: "\(source.minimalIdentifier)→\(targetLanguage.minimalIdentifier) not installed")
+        }
+        let session = TranslationSession(installedSource: source, target: targetLanguage)
+        let response = try await session.translate(text)
+        Self.logger.info("translated locally (Translation): \(response.targetText.count, privacy: .public) chars, \(source.minimalIdentifier, privacy: .public)→\(targetLanguage.minimalIdentifier, privacy: .public)")
+        return response.targetText
+    }
+
+    static func isInstalled(from source: Locale.Language, to target: Locale.Language) async -> Bool {
+        await LanguageAvailability().status(from: source, to: target) == .installed
+    }
+
+    private static func sourceLanguage(of text: String) -> Locale.Language? {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        return recognizer.dominantLanguage.map { Locale.Language(identifier: $0.rawValue) }
     }
 }

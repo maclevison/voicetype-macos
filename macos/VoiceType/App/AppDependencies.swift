@@ -28,9 +28,12 @@ final class AppDependencies {
     let permissionsChecker: PermissionsChecker
     let hudController: HUDController
     let soundFeedback: SoundFeedbackService
-    let whisperModels: WhisperModelManager
+    let localModels: LocalModelManager
     let recordingOrchestrator: RecordingOrchestrator
+    /// Shared by the onboarding window and the orchestrator (practice takes).
+    let onboardingPractice: OnboardingPracticeSink
     let meetingRecorder: MeetingRecorder
+    let pendingApprovals: PendingApprovals
     let meetingDetector: MeetingDetector
 
     init(
@@ -60,10 +63,22 @@ final class AppDependencies {
         self.hudController = resolvedHud
         self.soundFeedback = resolvedSoundFeedback
 
-        let resolvedWhisperModels = WhisperModelManager()
-        self.whisperModels = resolvedWhisperModels
-        resolvedWhisperModels.bootstrap()
+        let configSnapshot = self.configSnapshot
+        let resolvedLocalModels = LocalModelManager(persist: { id in
+            Task { await configSnapshot.update { $0.localTranscriptionModel = id } }
+        })
+        self.localModels = resolvedLocalModels
+        // The app is also the unit-test host: there, loading the user's model
+        // would read, repair or download the real files in Application Support.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            Task {
+                let selectedID = (try? await configStore.load())?.localTranscriptionModel ?? LocalModelCatalog.defaultID
+                resolvedLocalModels.bootstrap(selectedID: selectedID)
+            }
+        }
 
+        let onboardingPractice = OnboardingPracticeSink()
+        self.onboardingPractice = onboardingPractice
         self.recordingOrchestrator = RecordingOrchestrator(
             configStore: configStore,
             historyStore: historyStore,
@@ -72,10 +87,15 @@ final class AppDependencies {
             paster: paster ?? Paster(),
             recorder: recorder ?? AudioRecorder(),
             soundFeedback: resolvedSoundFeedback,
-            whisperModels: resolvedWhisperModels,
-            editObserver: EditObserver(store: suggestionStore)
+            localModels: resolvedLocalModels,
+            editObserver: EditObserver(store: suggestionStore),
+            practiceSink: onboardingPractice
         )
-        self.meetingRecorder = MeetingRecorder(configStore: configStore, notifier: resolvedNotifier)
+        let pendingApprovals = PendingApprovals(notifier: resolvedNotifier)
+        self.pendingApprovals = pendingApprovals
+        self.meetingRecorder = MeetingRecorder(configStore: configStore, notifier: resolvedNotifier, onPendingChanged: {
+            await pendingApprovals.refresh()
+        })
         self.meetingDetector = MeetingDetector(recorder: meetingRecorder, config: configSnapshot, notifier: resolvedNotifier)
     }
 }

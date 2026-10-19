@@ -554,6 +554,66 @@ struct AppConfigCodableTests {
         #expect(decoded.voiceNoteShortcut == "Alt+N")
     }
 
+    @Test func vaultKindDefaultsAndTolerantDecode() throws {
+        #expect(AppConfig().meetingVaultKind == .obsidian)
+        #expect(AppConfig().openKnowledgeVaultPath == "")
+        let missing = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"schemaVersion":2}"#.utf8))
+        #expect(missing.meetingVaultKind == .obsidian)
+        #expect(missing.openKnowledgeVaultPath == "")
+        let garbage = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"schemaVersion":2,"meetingVaultKind":"notion"}"#.utf8))
+        #expect(garbage.meetingVaultKind == .obsidian)
+        let v1 = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"groqApiKey":"k"}"#.utf8))
+        #expect(v1.meetingVaultKind == .obsidian)
+        #expect(v1.openKnowledgeVaultPath == "")
+    }
+
+    // MARK: - onboardingCompleted
+
+    @Test func onboardingCompleted_default_false() {
+        #expect(AppConfig().onboardingCompleted == false)
+    }
+
+    @Test func onboardingCompleted_roundtrip() throws {
+        let original = AppConfig(onboardingCompleted: true)
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(AppConfig.self, from: encoded)
+        #expect(decoded.onboardingCompleted == true)
+        #expect(decoded == original)
+    }
+
+    @Test func onboardingCompleted_missing_in_v2_falls_back_to_false() throws {
+        // An existing config.json written before the field existed.
+        let json = """
+        {
+            "schemaVersion": 2,
+            "groq": {"apiKey": ""},
+            "shortcuts": {"refine": "Fn", "translate": "CommandOrControl+Shift+E"},
+            "history": {"enabled": true, "retentionCount": 100, "retentionDays": 7},
+            "showHud": true,
+            "meetingVaultKind": "openKnowledge",
+            "openKnowledgeVaultPath": "~/MegaBrain"
+        }
+        """.data(using: .utf8)!
+
+        let cfg = try JSONDecoder().decode(AppConfig.self, from: json)
+        #expect(cfg.onboardingCompleted == false)
+        #expect(cfg.shortcuts.refine == "Fn")
+    }
+
+    @Test func onboardingCompleted_missing_in_v1_falls_back_to_false() throws {
+        let v1Json = """
+        {"schemaVersion": 1, "groqApiKey": "gsk_xyz"}
+        """.data(using: .utf8)!
+        let cfg = try JSONDecoder().decode(AppConfig.self, from: v1Json)
+        #expect(cfg.onboardingCompleted == false)
+    }
+
+    @Test func localTranscriptionModel_defaults_and_missing_key() throws {
+        #expect(AppConfig().localTranscriptionModel == "openai_whisper-small")
+        let missing = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"schemaVersion":2}"#.utf8))
+        #expect(missing.localTranscriptionModel == "openai_whisper-small")
+    }
+
     @Test func meetingOrgsDefaultCatalogAndTolerantEntries() throws {
         #expect(AppConfig().meetingOrgs == [MeetingOrg(name: "Pessoal")])
         // Hand-edited entries may omit aliases/clients.
